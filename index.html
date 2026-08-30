@@ -1,0 +1,2588 @@
+<meta charset="utf-8" />
+<title>Grid Sixty-Four</title>
+<style>
+  /* ── Single visual world: a piece of gear in a dark room. ──
+     Touch-first: the grid is sized to the viewport so the whole
+     instrument is always reachable without scrolling. */
+  :root {
+    color-scheme: dark;
+
+    --ground:      #06070A;
+    --vignette:    #101320;
+    --bezel:       #14161F;
+    --bezel-edge:  #2A2F3D;
+    --slot:        #07080C;
+
+    --ink:         #E9EBF2;
+    --ink-dim:     #9297AC;
+    --ink-faint:   #5B6076;
+    --rule:        #232733;
+
+    --focus:       #38E0F0;
+    --warn:        #FFB84D;
+    --bad:         #FF6B6B;
+
+    --f-drum:  #FF9F2E;
+    --f-bass:  #FF3E86;
+    --f-chord: #2BD4EE;
+    --f-lead:  #A98CFF;
+    --f-perc:  #EDF1FA;
+    --f-fx:    #A9E63C;
+    --f-note:  #FFD23F;
+    --f-pack:  #2BD4EE;
+    --f-empty: #394054;
+
+    --cellw: 64px;
+    --cellh: 64px;          /* JS가 화면에 맞춰 계산해 넣는다 */
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    min-height: 26rem;
+    margin: 0;
+    overflow: hidden;                 /* 악기는 스크롤되지 않는다 */
+    overscroll-behavior: none;
+  }
+  body {
+    background: var(--ground);
+    background-image: radial-gradient(120% 80% at 50% 0%, var(--vignette) 0%, var(--ground) 60%);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* dvh 는 크롬 108+ 에서만 된다. 학교 태블릿은 그보다 낮은 경우가 많아
+     vh 를 먼저 쓰고 dvh 는 아는 브라우저만 덮어쓰게 한다. */
+  .app {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 26rem;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── 상단 바 ─────────────────────────────────────── */
+  .topbar {
+    flex: none;
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid #000;
+    background: linear-gradient(180deg, #141822 0%, #0B0D13 100%);
+    box-shadow: inset 0 1px 0 #ffffff12, 0 1px 0 #ffffff08;
+  }
+  .brand {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 600;
+    letter-spacing: 0.18em; color: var(--ink-faint); flex: none;
+  }
+  .ttl {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em;
+    color: var(--ink); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0;
+  }
+  .grow { flex: 1 1 auto; min-width: 0; }
+
+  .ico {
+    appearance: none; flex: none;
+    min-width: 2.5rem; height: 2.5rem;
+    padding: 0 0.6rem;
+    background: linear-gradient(180deg, #242A37 0%, #171B25 100%);
+    border: 1px solid #2E3444; border-radius: 10px;
+    color: var(--ink); cursor: pointer;
+    font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.08em;
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 1px 0 #ffffff1c, 0 1px 2px #000000a0;
+    transition: background 120ms ease, border-color 120ms ease,
+                transform 70ms ease, box-shadow 100ms ease;
+  }
+  .ico:hover:not(:disabled) { background: #232836; }
+  .ico:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: inset 0 2px 5px #000000a0;
+  }
+  .ico:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .ico:disabled { opacity: 0.35; cursor: not-allowed; }
+  .ico[data-on="1"] { background: var(--focus); border-color: var(--focus); color: #04141A; font-weight: 700; }
+  .ico.danger:active { border-color: var(--bad); color: var(--bad); }
+  .ico.rec[data-on="1"] {
+    background: var(--bad); border-color: var(--bad); color: #240809; font-weight: 700;
+  }
+  .ico.add[data-on="1"] {
+    background: var(--f-fx); border-color: var(--f-fx); color: #0C1405; font-weight: 700;
+  }
+
+  /* 입력 레벨 — 마이크가 살아 있는지 눈으로 보이게 */
+  .meter {
+    display: inline-flex; flex: none;
+    width: 3rem; height: 0.4rem; border-radius: 99px;
+    background: #0D0F16; border: 1px solid var(--rule); overflow: hidden;
+  }
+  .meter[hidden] { display: none; }
+  .meter i { display: block; width: 0%; height: 100%; background: var(--bad); }
+
+  .ttl[data-tone="bad"]  { color: var(--bad); }
+  .ttl[data-tone="ok"]   { color: var(--f-fx); }
+  .ttl[data-tone="warn"] { color: var(--warn); }
+
+  .ico.era[data-on="1"] {
+    background: var(--warn); border-color: var(--warn); color: #2A1B02; font-weight: 700;
+  }
+  /* 지우는 중 — 붉은 테 */
+  .grid.erase .pad {
+    box-shadow:
+      inset 0 0 0 1px #FFB84D7a,
+      inset 0 1px 0 #ffffff14,
+      inset 0 -2px 5px #00000090,
+      0 2px 3px #000000a8;
+  }
+
+  /* 음악 넣을 칸을 고르는 중 — 초록 테 */
+  .grid.place .pad {
+    box-shadow:
+      inset 0 0 0 1px #A9E63C66,
+      inset 0 1px 0 #ffffff14,
+      inset 0 -2px 5px #00000090,
+      0 2px 3px #000000a8;
+  }
+
+  /* 녹음 대기 중엔 칸마다 붉은 테를 둘러 평소와 구분한다 */
+  .grid.arm .pad::before { opacity: 0.05; }
+  .grid.arm .pad {
+    box-shadow:
+      inset 0 0 0 1px #FF6B6B4d,
+      inset 0 1px 0 #ffffff14,
+      inset 0 -2px 5px #00000090,
+      0 2px 3px #000000a8;
+  }
+
+  /* ── 그리드 위 얇은 띠: 체인 칩 또는 박자등 ───────── */
+  .strip {
+    flex: none; height: 2.3rem;
+    display: flex; align-items: center; gap: 0.35rem;
+    padding: 0 0.6rem;
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
+    background: linear-gradient(180deg, #0C0F16 0%, #090B11 100%);
+    border-bottom: 1px solid #000;
+    box-shadow: inset 0 1px 0 #ffffff0c;
+  }
+  .strip::-webkit-scrollbar { display: none; }
+  .chip {
+    appearance: none; flex: none;
+    min-width: 2rem; height: 1.6rem; padding: 0 0.45rem;
+    background: linear-gradient(180deg, #242A37 0%, #171B25 100%);
+    border: 1px solid #2E3444; border-radius: 7px;
+    color: var(--ink); cursor: pointer;
+    font-family: var(--mono); font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    box-shadow: inset 0 1px 0 #ffffff18, 0 1px 2px #0000008c;
+    transition: transform 70ms ease, box-shadow 100ms ease, background 120ms ease;
+  }
+  .chip:active { transform: translateY(1px); box-shadow: inset 0 2px 4px #00000099; }
+  .chip[data-on="1"] { background: var(--f-pack); border-color: var(--f-pack); color: #04141A; font-weight: 700; }
+  .chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .striplabel {
+    font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em;
+    color: var(--ink-faint); flex: none; text-transform: uppercase;
+  }
+  .beat { display: flex; gap: 0.28rem; flex: none; }
+  .beat i {
+    width: 0.5rem; height: 0.5rem; border-radius: 50%;
+    background: #262B38; display: block;
+    transition: background 60ms linear, box-shadow 60ms linear;
+  }
+  .beat i.lit { background: var(--focus); box-shadow: 0 0 9px var(--focus); }
+
+  /* 지금 울리고 있는 화음 — 라이브로 칠 때 제일 알고 싶은 정보 */
+  .chordv {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em;
+    color: var(--ink); flex: none;
+    min-width: 4.2ch; text-align: center;
+    padding: 0.16rem 0.45rem; border-radius: 6px;
+    background: #11141C; border: 1px solid var(--rule);
+    box-shadow: inset 0 1px 0 #ffffff0e;
+  }
+  /* 필터가 16마디 주기 어디쯤인지 */
+  .swp {
+    width: 4.2rem; height: 0.34rem; border-radius: 99px; flex: none;
+    background: #0B0D13; border: 1px solid var(--rule); overflow: hidden;
+  }
+  .swp i {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--f-chord), var(--f-fx));
+  }
+  .swp[hidden] { display: none; }
+
+  /* ── 무대 + 기계 ──────────────────────────────────── */
+  .stage {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0.5rem;
+    /* 기계가 놓인 바닥 — 가운데가 살짝 밝아 물건이 떠 보인다 */
+    background: radial-gradient(70% 60% at 50% 45%, #0E1119 0%, #06070A 72%);
+  }
+  .rig { display: flex; align-items: center; gap: 0.35rem; }
+  .device {
+    position: relative;
+    display: block;
+    background: linear-gradient(180deg, #1C212D 0%, #13161F 42%, #0B0D13 100%);
+    border: 1px solid var(--bezel-edge);
+    border-radius: calc(var(--cellh) * 0.3);
+    padding: calc(var(--cellh) * 0.14);
+    /* 위는 빛을 받고 아래는 그늘 — 이 한 줄이 물건처럼 보이게 만든다 */
+    box-shadow:
+      inset 0 1px 0 #ffffff26,
+      inset 0 -1px 0 #000000b3,
+      0 2px 0 #000000aa,
+      0 44px 90px -52px #000;
+    outline: 2px dashed transparent; outline-offset: 6px;
+    transition: outline-color 150ms ease;
+  }
+  /* 사출 플라스틱 질감 — 아주 옅게, 빛을 먹는 정도로만 */
+  .device::before {
+    content: ""; position: absolute; inset: 0;
+    border-radius: inherit; pointer-events: none;
+    background-image: repeating-linear-gradient(115deg, #ffffff06 0 1px, transparent 1px 3px);
+  }
+  .device.drop { outline-color: var(--focus); }
+
+  /* 몸통 밖에 세우고 안쪽 패드 줄과 높이를 맞춘다
+     (몸통 여백 0.14 + 그리드 여백 0.045 = 0.185칸) */
+  .rail { display: grid; gap: calc(var(--cellh) * 0.105); flex: none; width: 1.6rem;
+          padding: calc(var(--cellh) * 0.185) 0; }
+  .rail span {
+    writing-mode: vertical-rl; text-orientation: mixed;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--sans); font-size: 0.62rem; letter-spacing: 0.02em;
+    color: #767C93; text-transform: uppercase; overflow: hidden;
+  }
+  @media (max-width: 34rem) { .rail { display: none; } }
+
+  .grid {
+    display: grid;
+    row-gap: calc(var(--cellh) * 0.105);
+    column-gap: calc(var(--cellw) * 0.09);
+    touch-action: none;                /* 손가락으로 훑을 때 스크롤 안 되게 */
+    padding: calc(var(--cellh) * 0.045);
+    border-radius: calc(var(--cellh) * 0.17);
+    background: var(--slot);
+    box-shadow: inset 0 2px 7px #000000d0, inset 0 -1px 0 #ffffff0d;
+  }
+
+  .pad {
+    appearance: none; position: relative;
+    width: var(--cellw); height: var(--cellh);
+    border-radius: calc(var(--cellh) * 0.24);
+    border: 0;
+    background: linear-gradient(180deg, #14181F 0%, #0A0C11 100%);
+    cursor: pointer; padding: 0; overflow: hidden;
+    touch-action: none;
+    transition: transform 80ms ease, box-shadow 130ms ease;
+    box-shadow:
+      inset 0 0 0 1px #ffffff0a,
+      inset 0 1px 0 #ffffff17,
+      inset 0 -2px 5px #00000090,
+      0 2px 3px #000000a8;
+  }
+  .pad::before {                       /* 색 */
+    content: ""; position: absolute; inset: 0;
+    border-radius: inherit; background: var(--hue);
+    opacity: 0.10; transition: opacity 160ms ease;
+  }
+  .pad::after {                        /* 위에서 떨어지는 광택 = 고무 질감 */
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 52%;
+    border-radius: inherit; pointer-events: none; z-index: 1;
+    background: linear-gradient(180deg, #ffffff20 0%, #ffffff08 58%, transparent 100%);
+    transition: height 110ms ease, opacity 110ms ease;
+  }
+  @media (hover: hover) { .pad:hover::before { opacity: 0.34; } }
+  .pad:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .pad[data-empty="1"]::before { opacity: 0.035; }
+  .pad[data-empty="1"]::after  { opacity: 0.45; }
+
+  .pad[data-lit="1"]::before { opacity: 1; }
+  .pad[data-lit="1"]::after  { opacity: 0.5; }
+  .pad[data-lit="1"] {
+    box-shadow:
+      inset 0 1px 0 #ffffff40,
+      0 0 0 1px var(--hue),
+      0 0 calc(var(--cellh) * 0.44) calc(var(--cellh) * -0.05) var(--hue),
+      0 0 calc(var(--cellh) * 1.0)  calc(var(--cellh) * -0.3)  var(--hue);
+  }
+  .pad[data-lit="2"]::before { opacity: 0.55; }
+  .pad[data-lit="2"] {
+    box-shadow:
+      inset 0 1px 0 #ffffff26,
+      0 0 calc(var(--cellh) * 0.3) calc(var(--cellh) * -0.12) var(--hue);
+  }
+  /* 눌리면 실제로 들어간다 — 광택이 줄고 그림자가 안으로 뒤집힌다 */
+  .pad.down {
+    transform: translateY(1px) scale(0.965);
+    box-shadow:
+      inset 0 3px 9px #000000c0,
+      inset 0 -1px 0 #ffffff0d;
+  }
+  .pad.down::after { height: 32%; opacity: 0.45; }
+
+  .pad .key {
+    position: absolute; top: 5%; left: 8%; z-index: 2;
+    font-family: var(--mono);
+    font-size: calc(var(--cellh) * 0.15);
+    color: #ffffff58; mix-blend-mode: plus-lighter;
+  }
+  @media (pointer: coarse) { .pad .key { display: none; } }
+
+  .pad .cap {
+    position: absolute; left: 0; right: 0; bottom: 7%; z-index: 2;
+    font-family: var(--mono);
+    font-size: calc(var(--cellh) * 0.135);
+    line-height: 1.1; letter-spacing: 0.05em;
+    color: #f2f5fbe6; text-align: center; padding: 0 5%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-shadow: 0 1px 0 #00000099;
+  }
+  .pad[data-lit="1"] .key, .pad[data-lit="1"] .cap {
+    color: #05070Be0; mix-blend-mode: normal; font-weight: 700;
+    text-shadow: 0 1px 0 #ffffff40;
+  }
+
+  @keyframes bar-pulse {
+    0%   { transform: scale(1.04); filter: brightness(1.55) saturate(1.15); }
+    100% { transform: scale(1);    filter: brightness(1)    saturate(1); }
+  }
+  .pad.pulse { animation: bar-pulse 260ms ease-out; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pad, .pad::before, .beat i, .sheet { transition: none; }
+    .pad.pulse { animation: none; }
+    .pad.down { transform: none; }
+  }
+
+  /* ── 태블릿 가로 (갤럭시 탭 = 16:10) ──
+     그리드는 정사각형이라 가로가 남는다. 띠를 오른쪽 기둥으로
+     세워 그 폭을 쓰고, 그리드는 높이를 꽉 채운다. */
+  @media (min-width: 44rem) and (min-aspect-ratio: 5/4) {
+    .app {
+      display: grid;
+      /* minmax(0,1fr) 이어야 무대가 내용보다 작게도 줄어든다.
+         그냥 1fr 이면 기계 크기만큼 버텨서 오른쪽 기둥을 화면 밖으로 민다. */
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .topbar { grid-column: 1 / -1; }
+    .stage  { grid-column: 1; grid-row: 2; min-width: 0; overflow: hidden; }
+    .strip {
+      grid-column: 2; grid-row: 2;
+      flex-direction: column; align-items: stretch;
+      width: 12rem; height: auto;
+      padding: 0.9rem 0.8rem; gap: 0.6rem;
+      overflow-x: hidden; overflow-y: auto;
+      border-bottom: 0; border-left: 1px solid #000;
+      box-shadow: inset 1px 0 0 #ffffff0c;
+    }
+    .strip .striplabel { text-align: center; }
+    .strip .beat { justify-content: center; gap: 0.5rem; }
+    .strip .beat i { width: 0.72rem; height: 0.72rem; }
+    .strip .chordv { width: 100%; font-size: 1.15rem; padding: 0.5rem 0.3rem; }
+    .strip .swp { width: 100%; height: 0.5rem; }
+    .strip .chip { width: 100%; height: 2.4rem; font-size: 0.8rem; }
+  }
+
+  /* ── 손가락으로 쓰는 기기 (학교 태블릿) ──
+     마우스보다 손가락이 굵다. 버튼을 전부 키운다. */
+  @media (pointer: coarse) {
+    .topbar { padding: 0.55rem 0.7rem; gap: 0.5rem; }
+    .ico { min-width: 3.1rem; height: 3.1rem; font-size: 0.9rem; border-radius: 12px; }
+    .ico.mini { min-width: auto; height: 2.3rem; font-size: 0.74rem; }
+    .chip { height: 2.3rem; min-width: 2.7rem; font-size: 0.82rem; border-radius: 9px; }
+    .strip { height: 3rem; }
+    .brand { font-size: 0.72rem; }
+    .ttl { font-size: 0.82rem; }
+    label.ctl { font-size: 0.78rem; }
+    label.ctl input[type="checkbox"] { width: 1.4rem; height: 1.4rem; }
+    label.ctl input[type="range"] { height: 1.6rem; }
+    .tin { height: 2.6rem; font-size: 0.82rem; }
+    .rail span { font-size: 0.7rem; }
+    .help, .legend li { font-size: 0.92rem; }
+  }
+
+  /* ── 시트 ─────────────────────────────────────────── */
+  .scrim {
+    position: fixed; inset: 0; background: #000a; z-index: 19;
+    opacity: 0; pointer-events: none; transition: opacity 200ms ease;
+  }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    max-height: 84vh;
+    max-height: 84dvh;
+    overflow-y: auto;
+    background: var(--bezel);
+    border-top: 1px solid var(--rule);
+    border-radius: 18px 18px 0 0;
+    padding: 0.5rem 1rem 2rem;
+    transform: translateY(101%);
+    transition: transform 240ms cubic-bezier(.22,.61,.36,1);
+    display: flex; flex-direction: column; gap: 1.1rem;
+  }
+  .sheet.open { transform: none; }
+  @media (min-width: 52rem) {
+    .sheet {
+      inset: 0 0 0 auto; width: 25rem; max-height: none;
+      border-radius: 0; border-top: 0; border-left: 1px solid var(--rule);
+      transform: translateX(101%);
+      padding: 1rem 1.2rem 2rem;
+    }
+  }
+  .handle {
+    width: 2.6rem; height: 0.25rem; border-radius: 99px;
+    background: var(--rule); margin: 0.15rem auto 0.3rem;
+  }
+  @media (min-width: 52rem) { .handle { display: none; } }
+
+  .sheet h2 {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--ink-faint);
+    margin: 0 0 0.6rem; padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .sheet section { display: flex; flex-direction: column; }
+  .sheet-top { display: flex; align-items: center; gap: 0.5rem; }
+  .sheet-top .ttl { font-size: 0.8rem; }
+
+  .row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .row:last-child { margin-bottom: 0; }
+  label.ctl {
+    display: flex; align-items: center; gap: 0.5rem; flex: 1 1 10rem;
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-dim);
+  }
+  label.ctl input[type="range"] { flex: 1 1 auto; min-width: 4rem; accent-color: var(--focus); cursor: pointer; }
+  label.ctl input[type="checkbox"] { accent-color: var(--focus); width: 1.05rem; height: 1.05rem; cursor: pointer; }
+  .val { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; }
+
+  .note { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em; color: var(--ink-faint); overflow-wrap: anywhere; margin: 0; }
+  .note[data-tone="ok"]   { color: var(--f-fx); }
+  .note[data-tone="warn"] { color: var(--warn); }
+  .note[data-tone="bad"]  { color: var(--bad); }
+
+  .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+  .legend li { display: flex; align-items: baseline; gap: 0.55rem; font-size: 0.82rem; color: var(--ink-dim); }
+  .legend .dot { width: 0.55rem; height: 0.55rem; border-radius: 3px; flex: none; transform: translateY(1px); }
+  .legend b { color: var(--ink); font-weight: 600; }
+
+  .meta { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.8rem; font-size: 0.82rem; margin: 0.5rem 0 0; }
+  .meta dt { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); align-self: center; }
+  .meta dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+
+  .log {
+    font-family: var(--mono); font-size: 0.66rem; line-height: 1.7;
+    color: var(--warn); margin-top: 0.5rem; max-height: 7rem; overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+
+  .tin {
+    flex: 1 1 8rem; min-width: 5rem; height: 2.1rem;
+    background: #0D0F16; border: 1px solid var(--rule); border-radius: 8px;
+    color: var(--ink); font-family: var(--mono); font-size: 0.72rem;
+    padding: 0 0.55rem;
+  }
+  .tin:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .mini { min-width: auto; height: 1.85rem; padding: 0 0.5rem; font-size: 0.64rem; }
+
+  .boards { list-style: none; margin: 0.55rem 0 0; padding: 0;
+            display: flex; flex-direction: column; gap: 0.35rem; }
+  .boards li {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.4rem 0.45rem 0.4rem 0.6rem;
+    background: #0D0F16; border: 1px solid var(--rule); border-radius: 9px;
+  }
+  .boards .bn { flex: 1 1 auto; min-width: 0; font-size: 0.8rem; color: var(--ink);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .boards .bt { font-family: var(--mono); font-size: 0.6rem; color: var(--ink-faint); flex: none; }
+  .boards li[data-auto="1"] { border-color: #2E5560; background: #0B1418; }
+
+  .help { font-size: 0.84rem; color: var(--ink-dim); display: flex; flex-direction: column; gap: 0.55rem; }
+  .help p { margin: 0; }
+  .help b { color: var(--ink); }
+  kbd {
+    font-family: var(--mono); font-size: 0.72rem;
+    background: #1B1F2B; border: 1px solid var(--rule); border-bottom-width: 2px;
+    border-radius: 5px; padding: 0.05rem 0.35rem; color: var(--ink);
+  }
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <span class="brand">패드64</span>
+    <span class="ttl grow" id="ttl">기본 소리</span>
+    <button class="ico" id="play" type="button" aria-label="재생 / 정지">▶</button>
+    <button class="ico danger" id="stopall" type="button" aria-label="소리 끊기">■</button>
+    <span class="meter" id="meter" hidden><i id="meterbar"></i></span>
+    <button class="ico rec" id="rec" type="button" data-on="0" aria-label="녹음 준비">●</button>
+    <button class="ico add" id="addmusic" type="button" data-on="0" aria-label="내 음악 넣기">음악</button>
+    <button class="ico" id="settings" type="button" aria-label="설정 열기">⚙</button>
+  </header>
+
+  <div class="strip" id="strip"></div>
+
+  <main class="stage" id="stage">
+    <div class="rig">
+      <div class="rail" id="rail"></div>
+      <div class="device" id="device">
+        <div class="grid" id="grid"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<aside class="sheet" id="sheet" aria-label="설정">
+  <div class="handle"></div>
+
+  <div class="sheet-top">
+    <span class="ttl grow" id="sheettitle">기본 소리</span>
+    <button class="ico" id="closesheet" type="button" aria-label="닫기">✕</button>
+  </div>
+
+  <section>
+    <h2>나만의 패드 만들기</h2>
+    <div class="row">
+      <input class="tin" id="newname" type="text" placeholder="패드 이름 (예: 내 첫 패드)" maxlength="30" />
+      <button class="ico" id="newboard" type="button">새로 만들기</button>
+    </div>
+    <div class="row">
+      <button class="ico era" id="erase" type="button" data-on="0">칸 지우기</button>
+      <button class="ico" id="tosynth" type="button" disabled>원래 소리로</button>
+    </div>
+    <p class="note">칸 지우기를 켜고 칸을 누르면 그 칸이 비워집니다. 원래 소리로 돌아가도 만든 패드는 저장돼 있어요.</p>
+    <div class="help" style="margin-top:0.6rem">
+      <p><b>1.</b> <b>새로 만들기</b> 를 누르면 빈 패드가 생겨요.</p>
+      <p><b>2.</b> 위쪽 <b>음악</b> 을 누르고 → 넣을 칸을 누르면 내 노래가 들어가요.</p>
+      <p><b>3.</b> 위쪽 <b>●</b> 를 누르고 → 칸을 꾹 누르고 있으면 내 목소리가 녹음돼요.</p>
+      <p>만든 건 저절로 저장돼요. 아래 <b>보드 저장</b>에서 이름을 붙여 여러 개 만들 수도 있어요.</p>
+      <p><b>원래 소리로</b> 를 누르면 처음의 드럼·베이스 패드로 돌아가고, 만든 패드는 <b>보드 저장</b> 목록에서 다시 열 수 있어요.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>소리 조절</h2>
+    <div class="row">
+      <label class="ctl">소리 <input id="vol" type="range" min="0" max="100" step="1" value="80" /><span class="val" id="volv">80</span></label>
+    </div>
+    <div class="row" id="bpmrow">
+      <label class="ctl">빠르기 <input id="bpm" type="range" min="70" max="170" step="1" value="102" /><span class="val" id="bpmv">102</span></label>
+    </div>
+    <div class="row">
+      <label class="ctl" style="flex:0 0 auto"><input id="glide" type="checkbox" checked /> 손가락 훑기</label>
+      <label class="ctl" style="flex:0 0 auto"><input id="pump" type="checkbox" checked /> 사이드체인 펌핑</label>
+      <label class="ctl" style="flex:0 0 auto"><input id="sweepon" type="checkbox" checked /> 필터 스윕</label>
+      <label class="ctl" style="flex:0 0 auto" id="flipyrow" hidden><input id="flipy" type="checkbox" /> Y축 뒤집기</label>
+    </div>
+  </section>
+
+  <section>
+    <h2>유니팩</h2>
+    <div class="row">
+      <button class="ico" id="openpack2" type="button">유니팩 열기</button>
+    </div>
+    <p class="note" id="packnote">.zip 유니팩을 화면에 끌어다 놓아도 됩니다</p>
+    <p class="note" id="decnote"></p>
+    <dl class="meta" id="meta" hidden></dl>
+    <div class="log" id="log" hidden></div>
+  </section>
+
+  <section>
+    <h2>보드 저장</h2>
+    <div class="row">
+      <input class="tin" id="boardname" type="text" placeholder="보드 이름" maxlength="40" />
+      <button class="ico" id="saveboard" type="button">저장</button>
+    </div>
+    <p class="note" id="savenote">배치를 바꾸면 자동으로 저장됩니다</p>
+    <ul class="boards" id="boards"></ul>
+  </section>
+
+  <section id="legendbox">
+    <h2>어느 줄이 무슨 소리?</h2>
+    <ul class="legend" id="legend"></ul>
+  </section>
+
+  <section>
+    <h2>진짜 런치패드 연결</h2>
+    <div class="row">
+      <button class="ico" id="midi" type="button">연결</button>
+      <span class="note" id="midis">미연결</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>연주법</h2>
+    <div class="help">
+      <p><b>위 네 줄은 루프</b>입니다. 누르면 다음 마디에 맞춰 들어오고, 다시 누르면 빠집니다. 같은 줄의 다른 칸을 누르면 그 줄만 갈아탑니다. <b>아래 네 줄은 원샷</b>이라 누르는 즉시 납니다.</p>
+      <p><b>여러 손가락</b>을 동시에 써도 되고, 누른 채 옆으로 훑으면 원샷이 이어서 납니다.</p>
+      <p><b>내 음악 넣기:</b> 위쪽 <b>음악</b> 을 누르고 → <b>넣고 싶은 칸</b>을 누르면 파일 선택창이 뜹니다. 고른 소리가 그 칸부터 차례로 들어갑니다. (컴퓨터에서는 파일을 패드 위로 끌어다 놓아도 됩니다)</p>
+      <p><b>녹음:</b> 위쪽 <b>●</b> 를 눌러 대기 상태로 만든 뒤, <b>패드를 누르고 있는 동안 녹음</b>되고 떼면 그 칸에 바로 붙습니다. 마이크는 https 나 localhost 에서만 열립니다.</p>
+      <p>키보드: <kbd>1</kbd><kbd>q</kbd><kbd>a</kbd><kbd>z</kbd> 줄이 위 네 줄, <kbd>Shift</kbd>를 누르면 아래 네 줄. <kbd>Space</kbd> 재생·정지, 팩 모드에서 <kbd>←</kbd><kbd>→</kbd>로 체인 이동.</p>
+    </div>
+  </section>
+</aside>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ═══════════════════════════════════════════════════════
+     1. 내장 신스용 음악 재료
+     한 마디 = 16스텝. 코드 진행은 4마디 주기 Am-F-C-G.
+     루프가 전부 한 마디라 아무 조합으로 겹쳐도 화성이 맞는다.
+     ═══════════════════════════════════════════════════════ */
+  var PROG = [
+    { root: 33, notes: [57, 60, 64], name: "라단" },
+    { root: 29, notes: [53, 57, 60], name: "파"  },
+    { root: 36, notes: [52, 55, 60], name: "도"  },
+    { root: 31, notes: [50, 55, 59], name: "솔"  }
+  ];
+  var MINOR = [0, 2, 3, 5, 7, 8, 10];
+  function deg(n) { return 69 + 12 * Math.floor(n / 7) + MINOR[((n % 7) + 7) % 7]; }
+  function hz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+  var E = [];
+  var DRUMS = [
+    { name: "단순", k: [0, 8], s: E, c: E, h: [0, 2, 4, 6, 8, 10, 12, 14], o: E },
+    { name: "쿵쿵",    k: [0, 4, 8, 12], s: E, c: [4, 12], h: [2, 6, 10, 14], o: E },
+    { name: "느긋",    k: [0], s: [8], c: E, h: [0, 2, 4, 6, 8, 10, 12, 14], o: E },
+    { name: "쪼갬",   k: [0, 10], s: [4, 12], c: E, h: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14], o: [7] },
+    { name: "다다닥",    k: [0, 7, 10], s: [8], c: E, h: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15], o: E },
+    { name: "엇박",  k: [0, 6, 10], s: [4, 12], c: E, h: [2, 3, 6, 7, 10, 11, 14, 15], o: [8] },
+    { name: "붐뱁", k: [0, 3, 8, 11], s: [4, 12], c: E, h: [0, 2, 4, 6, 8, 10, 12, 14], o: E },
+    { name: "채움",    k: [0], s: [4, 6, 8, 10, 11, 12, 13, 14, 15], c: [0], h: E, o: E }
+  ];
+  var BASS = [
+    { name: "길게",  n: [[0, 0, 16]] },
+    { name: "두번",   n: [[0, 0, 7], [8, 0, 7]] },
+    { name: "밀기",  n: [[0, 0, 3], [3, 0, 4], [8, 0, 3], [11, 0, 4]] },
+    { name: "촘촘",  n: [[0, 0, 2], [2, 0, 2], [4, 0, 2], [6, 0, 2], [8, 0, 2], [10, 0, 2], [12, 0, 2], [14, 0, 2]] },
+    { name: "옥타브",   n: [[0, 0, 3], [4, 12, 3], [8, 0, 3], [12, 12, 3]] },
+    { name: "당김",  n: [[0, 0, 5], [6, 0, 2], [8, 0, 5], [14, 12, 2]] },
+    { name: "질주", n: [[0,0,1],[1,0,1],[2,0,1],[3,0,1],[4,0,1],[5,0,1],[6,0,1],[7,0,1],[8,0,1],[9,0,1],[10,0,1],[11,0,1],[12,0,1],[13,0,1],[14,7,1],[15,12,1]] },
+    { name: "5도", n: [[0, 0, 6], [6, 7, 2], [8, 0, 6], [14, 7, 2]] }
+  ];
+  var CHORDS = [
+    { name: "이불",   mode: "hold", hits: [0] },
+    { name: "콕",  mode: "stab", hits: [0] },
+    { name: "두번",   mode: "stab", hits: [0, 8] },
+    { name: "엇박",   mode: "stab", hits: [2, 6, 10, 14] },
+    { name: "ARP↑", mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: 1 },
+    { name: "ARP↓", mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: -1 },
+    { name: "통통", mode: "stab", hits: [0, 4, 8, 12] },
+    { name: "부풀림", mode: "hold", hits: [0], swell: true }
+  ];
+  var LEAD = [
+    { name: "단순", n: [[0, 0, 4], [4, 2, 4], [8, 4, 4], [12, 2, 4]] },
+    { name: "부름",   n: [[0, 4, 2], [2, 3, 2], [4, 2, 4], [8, 0, 8]] },
+    { name: "오름",   n: [[0, 0, 2], [2, 2, 2], [4, 4, 2], [6, 5, 2], [8, 7, 8]] },
+    { name: "빠르게",  n: [[0,0,1],[1,2,1],[2,4,1],[3,2,1],[4,0,1],[5,2,1],[6,4,1],[7,6,1],[8,7,1],[9,4,1],[10,2,1],[11,4,1],[12,0,1],[13,2,1],[14,4,1],[15,2,1]] },
+    { name: "높게",   n: [[0, 7, 6], [6, 6, 2], [8, 4, 8]] },
+    { name: "당김",   n: [[0, 4, 3], [3, 5, 1], [6, 4, 2], [8, 2, 3], [11, 0, 1], [14, 2, 2]] },
+    { name: "내림",   n: [[0, 9, 2], [2, 7, 2], [4, 6, 2], [6, 4, 2], [8, 2, 4], [12, 0, 4]] },
+    { name: "후렴",   n: [[0, 4, 2], [2, 4, 1], [3, 6, 3], [8, 7, 4], [12, 4, 4]] }
+  ];
+  /* ── 프렌치 하우스 뱅크 ──
+     다프트 펑크 결은 멜로디가 아니라 처리로 만들어진다.
+     4/4 킥 + 킥마다 눌리는 사이드체인 + 16마디에 걸쳐 열렸다 닫히는 필터. */
+  var FH_DRUMS = [
+    { name: "쿵쿵쿵", k: [0, 4, 8, 12], s: E, c: [4, 12], h: [2, 6, 10, 14], o: E },
+    { name: "펌프",   k: [0, 4, 8, 12], s: E, c: [4, 12], h: E, o: [2, 6, 10, 14] },
+    { name: "디스코",  k: [0, 4, 8, 12], s: E, c: [4, 12], h: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], o: E },
+    { name: "촘촘",  k: [0, 4, 8, 12], s: E, c: [4, 12], h: [2, 3, 6, 7, 10, 11, 14, 15], o: E },
+    { name: "위쪽만",   k: E, s: E, c: [4, 12], h: [0, 2, 4, 6, 8, 10, 12, 14], o: [7, 15] },
+    { name: "비우기",   k: [0, 8], s: E, c: [12], h: [2, 6, 10, 14], o: E },
+    { name: "로봇",  k: [0, 4, 8, 12], s: [14], c: [4, 12], h: [2, 6, 10, 14], o: E },
+    { name: "채움",   k: [0, 4, 8], s: [10, 11, 12, 13, 14, 15], c: [4], h: E, o: E }
+  ];
+  var FH_BASS = [
+    { name: "옥타브", n: [[0,0,2],[2,12,2],[4,0,2],[6,12,2],[8,0,2],[10,12,2],[12,0,2],[14,12,2]] },
+    { name: "통통",  n: [[0,0,1],[2,0,1],[4,0,1],[6,0,1],[8,0,1],[10,0,1],[12,0,1],[14,0,1]] },
+    { name: "걷기",   n: [[0,0,2],[2,0,2],[4,7,2],[6,12,2],[8,0,2],[10,0,2],[12,7,2],[14,10,2]] },
+    { name: "저음",    n: [[0,0,16]] },
+    { name: "엇박",n: [[2,0,2],[6,0,2],[10,0,2],[14,0,2]] },
+    { name: "당김",  n: [[0,0,3],[3,12,1],[6,0,2],[8,0,3],[11,12,1],[14,7,2]] },
+    { name: "질주",  n: [[0,0,1],[1,0,1],[2,0,1],[3,0,1],[4,0,1],[5,0,1],[6,0,1],[7,0,1],[8,0,1],[9,0,1],[10,0,1],[11,0,1],[12,0,1],[13,0,1],[14,0,1],[15,12,1]] },
+    { name: "콕",   n: [[0,0,2],[8,0,2]] }
+  ];
+  var FH_CHORDS = [
+    { name: "스윕", mode: "hold", hits: [0], sweep: true },
+    { name: "썰기",  mode: "stab", hits: [0, 2, 4, 6, 8, 10, 12, 14], sweep: true },
+    { name: "엇박",   mode: "stab", hits: [2, 6, 10, 14], sweep: true },
+    { name: "촘촘",  mode: "stab", hits: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], sweep: true },
+    { name: "피아노", mode: "stab", hits: [2, 3, 6, 10, 11, 14], sweep: true },
+    { name: "오름", mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: 1, sweep: true },
+    { name: "내림", mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: -1, sweep: true },
+    { name: "부풀림", mode: "hold", hits: [0], swell: true }
+  ];
+  var FH_LEAD = [
+    { name: "로봇", n: [[0,0,2],[2,2,2],[4,4,2],[6,2,2],[8,0,2],[10,2,2],[12,4,4]] },
+    { name: "말하듯",  n: [[0,4,1],[1,4,1],[2,2,2],[4,0,2],[8,4,1],[9,4,1],[10,2,2],[12,0,4]] },
+    { name: "후렴",  n: [[0,7,4],[4,4,2],[6,2,2],[8,4,4],[12,2,4]] },
+    { name: "옥타브", n: [[0,0,1],[2,7,1],[4,0,1],[6,7,1],[8,0,1],[10,7,1],[12,0,1],[14,7,1]] },
+    { name: "오름",  n: [[0,0,2],[2,2,2],[4,4,2],[6,5,2],[8,7,2],[10,8,2],[12,9,4]] },
+    { name: "콕",  n: [[0,4,1],[4,4,1],[8,4,1],[12,4,1]] },
+    { name: "내림",  n: [[0,9,2],[2,7,2],[4,6,2],[6,4,2],[8,2,4],[12,0,4]] },
+    { name: "길게",  n: [[0,7,16]] }
+  ];
+  /* 디스코식 7화음 진행 — Am7 Dm7 G7 Cmaj7 */
+  var PROG_FH = [
+    { root: 33, notes: [57, 60, 64, 67], name: "라단"   },
+    { root: 38, notes: [57, 62, 65, 69], name: "레단"   },
+    { root: 31, notes: [55, 59, 62, 65], name: "솔"    },
+    { root: 36, notes: [55, 60, 64, 67], name: "도" }
+  ];
+
+  var BANKS = [
+    { id: "basic",  name: "기본",  drums: DRUMS,    bass: BASS,    chords: CHORDS,    lead: LEAD,    prog: PROG,    pump: 0 },
+    { id: "french", name: "디스코", drums: FH_DRUMS, bass: FH_BASS, chords: FH_CHORDS, lead: FH_LEAD, prog: PROG_FH, pump: 0.62 }
+  ];
+  var bankIdx = 0;
+  function bank() { return BANKS[bankIdx]; }
+
+  var PERC = ["큰북", "작은북", "박수", "하이햇", "열린햇", "톰톰", "딱", "심벌"];
+  var FXN  = ["올라감", "쾅", "떨어짐", "휙", "찌직", "사이렌", "치직", "저음"];
+  var SYNTH_ROWS = [
+    { label: "드럼",   hue: "--f-drum",  kind: "loop", key: "drums" },
+    { label: "베이스", hue: "--f-bass",  kind: "loop", key: "bass" },
+    { label: "화음",   hue: "--f-chord", kind: "loop", key: "chords" },
+    { label: "멜로디", hue: "--f-lead",  kind: "loop", key: "lead" },
+    { label: "타악기", hue: "--f-perc",  kind: "perc" },
+    { label: "효과음", hue: "--f-fx",    kind: "fx" },
+    { label: "낮은음", hue: "--f-note",  kind: "note", oct: 0 },
+    { label: "높은음", hue: "--f-note",  kind: "note", oct: 1 }
+  ];
+  var KEYROWS = [
+    ["1", "2", "3", "4", "5", "6", "7", "8"],
+    ["q", "w", "e", "r", "t", "y", "u", "i"],
+    ["a", "s", "d", "f", "g", "h", "j", "k"],
+    ["z", "x", "c", "v", "b", "n", "m", ","]
+  ];
+
+  /* ═══════════════════════════════════════════════════════
+     2. 오디오 엔진
+     ═══════════════════════════════════════════════════════ */
+  var ctx = null, master, wet, verb, noiseBuf, duck, punch, outGain;
+  var pumpAmt = 0, pumpOn = true, sweepOn = true;
+
+  function initAudio() {
+    if (ctx) return true;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    ctx = new AC();
+    var comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.knee.value = 22;
+    comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
+    master  = ctx.createGain();   // 킥을 뺀 나머지 전부
+    duck    = ctx.createGain();   // 사이드체인이 눌러대는 자리
+    punch   = ctx.createGain();   // 킥 전용 — 킥이 자기를 누르면 펌핑이 안 들린다
+    outGain = ctx.createGain();
+    outGain.gain.value = volEl.value / 100 * 0.9;
+    verb = ctx.createConvolver(); verb.buffer = makeIR(2.0, 2.6);
+    wet = ctx.createGain(); wet.gain.value = 0.9;
+    master.connect(duck); duck.connect(comp);
+    punch.connect(comp);
+    wet.connect(verb); verb.connect(duck);
+    comp.connect(outGain); outGain.connect(ctx.destination);
+    var n = ctx.sampleRate * 2;
+    noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
+    var d = noiseBuf.getChannelData(0);
+    for (var i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    return true;
+  }
+  function wake() { if (ctx && ctx.state === "suspended") ctx.resume(); }
+
+  function makeIR(sec, decay) {
+    var len = Math.floor(ctx.sampleRate * sec);
+    var buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (var c = 0; c < 2; c++) {
+      var ch = buf.getChannelData(c);
+      for (var i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
+  function noise(t, dur) {
+    var s = ctx.createBufferSource();
+    s.buffer = noiseBuf; s.loop = true; s.start(t); s.stop(t + dur); return s;
+  }
+  function out(node, g, t, send, bus) {
+    node.connect(g); g.connect(bus || master);
+    if (send) { var sg = ctx.createGain(); sg.gain.value = send; g.connect(sg); sg.connect(wet); }
+  }
+
+  /* 킥이 칠 때마다 나머지 전부를 확 눌렀다 놓는다.
+     이 '우-웅' 하는 호흡이 프렌치 하우스의 절반이다. */
+  function ducker(t) {
+    if (!duck || !pumpOn || !pumpAmt) return;
+    var g = duck.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(1, t);
+    g.linearRampToValueAtTime(1 - pumpAmt, t + 0.014);
+    g.setTargetAtTime(1, t + 0.022, 0.085);
+  }
+
+  function kick(t, v) {
+    v = v || 1;
+    ducker(t);
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(155, t);
+    o.frequency.exponentialRampToValueAtTime(44, t + 0.11);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.9 * v, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    out(o, g, t, 0.05, punch); o.start(t); o.stop(t + 0.45);
+    var cs = noise(t, 0.02), cf = ctx.createBiquadFilter(), cg = ctx.createGain();
+    cf.type = "highpass"; cf.frequency.value = 1200;
+    cg.gain.setValueAtTime(0.22 * v, t);
+    cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.02);
+    cs.connect(cf); out(cf, cg, t, 0, punch);
+  }
+  function snare(t, v) {
+    v = v || 1;
+    var s = noise(t, 0.24), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = "bandpass"; f.frequency.value = 1900; f.Q.value = 0.7;
+    g.gain.setValueAtTime(0.7 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    s.connect(f); out(f, g, t, 0.3);
+    var o = ctx.createOscillator(), og = ctx.createGain();
+    o.type = "triangle"; o.frequency.value = 195;
+    og.gain.setValueAtTime(0.4 * v, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    out(o, og, t, 0.15); o.start(t); o.stop(t + 0.12);
+  }
+  function clap(t, v) {
+    v = v || 1;
+    for (var i = 0; i < 4; i++) {
+      var ts = t + i * 0.011;
+      var s = noise(ts, 0.14), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      f.type = "bandpass"; f.frequency.value = 1500; f.Q.value = 1.1;
+      var amp = (i === 3 ? 0.7 : 0.34) * v;
+      g.gain.setValueAtTime(amp, ts);
+      g.gain.exponentialRampToValueAtTime(0.0001, ts + (i === 3 ? 0.14 : 0.03));
+      s.connect(f); out(f, g, ts, 0.34);
+    }
+  }
+  function hat(t, v, open) {
+    v = v || 1;
+    var dur = open ? 0.3 : 0.05;
+    var s = noise(t, dur + 0.02), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = "highpass"; f.frequency.value = 8200;
+    g.gain.setValueAtTime(0.34 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); out(f, g, t, open ? 0.2 : 0.05);
+  }
+  function tom(t, v) {
+    v = v || 1;
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(240, t);
+    o.frequency.exponentialRampToValueAtTime(96, t + 0.25);
+    g.gain.setValueAtTime(0.6 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+    out(o, g, t, 0.2); o.start(t); o.stop(t + 0.36);
+  }
+  function rim(t, v) {
+    v = v || 1;
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "square"; o.frequency.value = 1720;
+    g.gain.setValueAtTime(0.3 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+    out(o, g, t, 0.24); o.start(t); o.stop(t + 0.04);
+  }
+  function crash(t, v) {
+    v = v || 1;
+    var s = noise(t, 1.8), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = "highpass"; f.frequency.value = 5200;
+    g.gain.setValueAtTime(0.34 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.7);
+    s.connect(f); out(f, g, t, 0.5);
+  }
+  function bassNote(m, t, dur, v) {
+    v = v || 1;
+    var g = ctx.createGain(), f = ctx.createBiquadFilter();
+    f.type = "lowpass"; f.frequency.setValueAtTime(1400, t);
+    f.frequency.exponentialRampToValueAtTime(420, t + 0.16); f.Q.value = 5;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.55 * v, t + 0.008);
+    g.gain.setTargetAtTime(0.34 * v, t + 0.01, 0.09);
+    g.gain.setTargetAtTime(0.0001, t + dur, 0.035);
+    ["sawtooth", "sine"].forEach(function (type, i) {
+      var o = ctx.createOscillator();
+      o.type = type; o.frequency.value = hz(m);
+      var og = ctx.createGain(); og.gain.value = i ? 0.85 : 0.5;
+      o.connect(og); og.connect(f); o.start(t); o.stop(t + dur + 0.2);
+    });
+    f.connect(g); g.connect(master);
+  }
+  function chordVoice(ms, t, dur, v, swell, cut, cut2) {
+    v = v || 1;
+    var g = ctx.createGain(), f = ctx.createBiquadFilter();
+    f.type = "lowpass";
+    if (swell) {
+      f.frequency.setValueAtTime(300, t);
+      f.frequency.linearRampToValueAtTime(2600, t + dur * 0.8);
+    } else if (cut) {
+      f.Q.value = 6;                       // 스윕이 들리려면 레조넌스가 있어야 한다
+      f.frequency.setValueAtTime(cut, t);
+      if (cut2) f.frequency.linearRampToValueAtTime(cut2, t + dur);
+    } else f.frequency.value = 1900;
+    var atk = swell ? dur * 0.45 : 0.02;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.13 * v, t + atk);
+    g.gain.setTargetAtTime(0.0001, t + dur, 0.14);
+    ms.forEach(function (m) {
+      [-6, 0, 6].forEach(function (cents) {
+        var o = ctx.createOscillator();
+        o.type = "sawtooth";
+        o.frequency.value = hz(m) * Math.pow(2, cents / 1200);
+        o.connect(f); o.start(t); o.stop(t + dur + 0.5);
+      });
+    });
+    f.connect(g); g.connect(master);
+    var s = ctx.createGain(); s.gain.value = 0.55; g.connect(s); s.connect(wet);
+  }
+  function leadNote(m, t, dur, v) {
+    v = v || 1;
+    var g = ctx.createGain(), f = ctx.createBiquadFilter();
+    f.type = "lowpass"; f.frequency.value = 3200; f.Q.value = 1;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22 * v, t + 0.012);
+    g.gain.setTargetAtTime(0.14 * v, t + 0.02, 0.12);
+    g.gain.setTargetAtTime(0.0001, t + dur, 0.06);
+    [["square", 0.5, 0], ["triangle", 0.9, 0], ["sawtooth", 0.28, 7]].forEach(function (p) {
+      var o = ctx.createOscillator();
+      o.type = p[0]; o.frequency.value = hz(m) * Math.pow(2, p[2] / 1200);
+      var og = ctx.createGain(); og.gain.value = p[1];
+      o.connect(og); og.connect(f); o.start(t); o.stop(t + dur + 0.3);
+    });
+    f.connect(g); g.connect(master);
+    var s = ctx.createGain(); s.gain.value = 0.45; g.connect(s); s.connect(wet);
+  }
+  function fx(kind, t) {
+    var s, f, g, o;
+    if (kind === 0) {
+      s = noise(t, 2.2); f = ctx.createBiquadFilter(); g = ctx.createGain();
+      f.type = "bandpass"; f.Q.value = 4;
+      f.frequency.setValueAtTime(300, t);
+      f.frequency.exponentialRampToValueAtTime(9000, t + 2.0);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.4, t + 1.9);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+      s.connect(f); out(f, g, t, 0.5);
+    } else if (kind === 1) {
+      o = ctx.createOscillator(); g = ctx.createGain();
+      o.frequency.setValueAtTime(120, t);
+      o.frequency.exponentialRampToValueAtTime(32, t + 0.6);
+      g.gain.setValueAtTime(0.9, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+      out(o, g, t, 0.4); o.start(t); o.stop(t + 1.25); crash(t, 0.5);
+    } else if (kind === 2) {
+      s = noise(t, 1.4); f = ctx.createBiquadFilter(); g = ctx.createGain();
+      f.type = "lowpass"; f.Q.value = 6;
+      f.frequency.setValueAtTime(8000, t);
+      f.frequency.exponentialRampToValueAtTime(140, t + 1.3);
+      g.gain.setValueAtTime(0.34, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+      s.connect(f); out(f, g, t, 0.5);
+    } else if (kind === 3) {
+      s = noise(t, 0.9); f = ctx.createBiquadFilter(); g = ctx.createGain();
+      f.type = "bandpass"; f.Q.value = 9;
+      f.frequency.setValueAtTime(6000, t);
+      f.frequency.exponentialRampToValueAtTime(600, t + 0.85);
+      g.gain.setValueAtTime(0.3, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+      s.connect(f); out(f, g, t, 0.55);
+    } else if (kind === 4) {
+      o = ctx.createOscillator(); g = ctx.createGain();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(2400, t);
+      o.frequency.exponentialRampToValueAtTime(90, t + 0.22);
+      g.gain.setValueAtTime(0.34, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+      out(o, g, t, 0.4); o.start(t); o.stop(t + 0.26);
+    } else if (kind === 5) {
+      o = ctx.createOscillator(); g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(560, t);
+      o.frequency.linearRampToValueAtTime(1150, t + 0.5);
+      o.frequency.linearRampToValueAtTime(560, t + 1.0);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.22, t + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.05);
+      out(o, g, t, 0.5); o.start(t); o.stop(t + 1.1);
+    } else if (kind === 6) {
+      s = noise(t, 0.34); f = ctx.createBiquadFilter(); g = ctx.createGain();
+      f.type = "bandpass"; f.frequency.value = 2400; f.Q.value = 1.4;
+      g.gain.setValueAtTime(0.26, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.33);
+      s.connect(f); out(f, g, t, 0.3);
+    } else {
+      o = ctx.createOscillator(); g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = 41.2;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.8, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+      out(o, g, t, 0.1); o.start(t); o.stop(t + 1.55);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     3. ZIP 리더 — 라이브러리 없이
+     중앙 디렉터리를 직접 읽고, 압축 해제는 브라우저 내장
+     DecompressionStream('deflate-raw') 에 맡긴다.
+     ═══════════════════════════════════════════════════════ */
+  function readZip(buf) {
+    var dv = new DataView(buf), u8 = new Uint8Array(buf), n = buf.byteLength;
+    var eocd = -1, limit = Math.max(0, n - 22 - 65535);
+    for (var i = n - 22; i >= limit; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error("ZIP 파일이 아닙니다");
+    var count = dv.getUint16(eocd + 10, true);
+    var p = dv.getUint32(eocd + 16, true);
+    var dec = new TextDecoder("utf-8");
+    var files = [];
+    for (var k = 0; k < count; k++) {
+      if (p + 46 > n || dv.getUint32(p, true) !== 0x02014b50) break;
+      var method = dv.getUint16(p + 10, true);
+      var csize  = dv.getUint32(p + 20, true);
+      var usize  = dv.getUint32(p + 24, true);
+      var nlen   = dv.getUint16(p + 28, true);
+      var elen   = dv.getUint16(p + 30, true);
+      var clen   = dv.getUint16(p + 32, true);
+      var lho    = dv.getUint32(p + 42, true);
+      var name   = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
+      if (name.slice(-1) !== "/") {
+        var ln = dv.getUint16(lho + 26, true), le = dv.getUint16(lho + 28, true);
+        files.push({ name: name, method: method, csize: csize, usize: usize,
+                     off: lho + 30 + ln + le });
+      }
+      p += 46 + nlen + elen + clen;
+    }
+    return { u8: u8, files: files };
+  }
+
+  async function zipRead(z, f) {
+    var raw = z.u8.slice(f.off, f.off + f.csize);
+    if (f.method === 0) return raw;
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("이 브라우저는 압축 해제를 지원하지 않습니다");
+    }
+    var ds = new DecompressionStream("deflate-raw");
+    var ab = await new Response(new Blob([raw]).stream().pipeThrough(ds)).arrayBuffer();
+    return new Uint8Array(ab);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     4. UniPack
+     info        : key=value
+     keySound    : chain x y 파일 [loop] [wormhole]   (전부 1부터)
+     autoPlay    : on/off/touch x y · chain N · delay ms
+     ═══════════════════════════════════════════════════════ */
+  var pack = null;     // {title, producer, x, y, chains, map, sounds, auto, entries}
+  var decoded = new Map();     // 파일경로 -> AudioBuffer
+  var userBlobs = new Map();   // 내가 넣은 음원 원본 (저장용)
+  var packZipBlob = null;      // 원본 유니팩 파일 — 이것만 저장하면 사운드 전부가 딸려온다
+  var voices  = new Map();     // "c:x:y" -> {src, g}
+  var chain = 1, flipY = false;
+
+  function norm(s) { return s.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase(); }
+
+  function stripRoot(files) {
+    // 팩이 폴더 하나로 감싸여 있으면 그 접두사를 벗긴다
+    var first = files[0] && files[0].name.replace(/\\/g, "/");
+    if (!first) return "";
+    var seg = first.indexOf("/") >= 0 ? first.slice(0, first.indexOf("/") + 1) : "";
+    if (!seg) return "";
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].name.replace(/\\/g, "/").indexOf(seg) !== 0) return "";
+    }
+    return seg;
+  }
+
+  async function loadPack(file) {
+    packnote.textContent = "여는 중… " + file.name;
+    packnote.dataset.tone = "";
+    logLines = [];
+    try {
+      var z = readZip(await file.arrayBuffer());
+      if (!z.files.length) throw new Error("빈 압축 파일입니다");
+      var root = stripRoot(z.files);
+      var byPath = new Map();
+      z.files.forEach(function (f) {
+        byPath.set(norm(f.name.replace(/\\/g, "/").slice(root.length)), f);
+      });
+      var td = new TextDecoder("utf-8");
+      function txt(name) {
+        var f = byPath.get(name);
+        return f ? zipRead(z, f).then(function (b) { return td.decode(b); }) : Promise.resolve(null);
+      }
+
+      var infoTxt = await txt("info");
+      if (infoTxt === null) throw new Error("info 파일이 없습니다 — UniPack이 아닌 것 같습니다");
+      var ks = await txt("keysound");
+      if (ks === null) throw new Error("keySound 파일이 없습니다");
+      var ap = await txt("autoplay");
+
+      // ── info
+      var meta = {};
+      infoTxt.split(/\r?\n/).forEach(function (line) {
+        var i = line.indexOf("=");
+        if (i < 0) return;
+        meta[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+      });
+      var bx = parseInt(meta.buttonx, 10) || 8;
+      var by = parseInt(meta.buttony, 10) || 8;
+      var ch = parseInt(meta.chain, 10) || 1;
+      if (ch < 1 || ch > 24) throw new Error("chain 값이 1~24를 벗어났습니다 (" + ch + ")");
+      bx = Math.min(Math.max(bx, 1), 16);
+      by = Math.min(Math.max(by, 1), 16);
+
+      // ── keySound
+      var map = new Map(), used = 0, skipped = 0;
+      ks.split(/\r?\n/).forEach(function (line) {
+        var t = line.trim();
+        if (!t || t.charAt(0) === "#") return;
+        var a = t.split(/\s+/);
+        if (a.length < 4) { skipped++; return; }
+        var c = parseInt(a[0], 10), x = parseInt(a[1], 10), y = parseInt(a[2], 10);
+        if (!(c >= 1 && c <= ch && x >= 1 && x <= bx && y >= 1 && y <= by)) { skipped++; return; }
+        var soundRel = a.slice(3, a.length).join(" ");
+        var loop = 1, worm = 0;
+        // 뒤쪽 숫자 1~2개는 loop / wormhole
+        var tail = a.slice(3);
+        if (tail.length >= 2 && /^\d+$/.test(tail[tail.length - 1]) && /^\d+$/.test(tail[tail.length - 2])) {
+          worm = parseInt(tail.pop(), 10); loop = parseInt(tail.pop(), 10);
+        } else if (tail.length >= 2 && /^\d+$/.test(tail[tail.length - 1])) {
+          loop = parseInt(tail.pop(), 10);
+        }
+        soundRel = tail.join(" ");
+        var key = c + ":" + x + ":" + y;
+        var path = norm("sounds/" + soundRel);
+        if (!byPath.has(path)) { logLines.push("소리 없음: " + soundRel); skipped++; return; }
+        if (!map.has(key)) map.set(key, { i: 0, items: [] });
+        map.get(key).items.push({ path: path, loop: loop, worm: worm, label: soundRel });
+        used++;
+      });
+      if (!used) throw new Error("keySound에서 쓸 수 있는 줄을 못 찾았습니다");
+
+      // ── autoPlay
+      var auto = null;
+      if (ap) {
+        auto = [];
+        var at = 0;
+        ap.split(/\r?\n/).forEach(function (line) {
+          var t = line.trim();
+          if (!t || t.charAt(0) === "#") return;
+          var a = t.split(/\s+/), cmd = a[0].toLowerCase();
+          if (cmd === "delay" || cmd === "d") { at += parseInt(a[1], 10) || 0; }
+          else if (cmd === "chain" || cmd === "c") { auto.push({ at: at, k: "c", n: parseInt(a[1], 10) || 1 }); }
+          else if (cmd === "on" || cmd === "o") { auto.push({ at: at, k: "on", x: +a[1], y: +a[2] }); }
+          else if (cmd === "off" || cmd === "f") { auto.push({ at: at, k: "off", x: +a[1], y: +a[2] }); }
+          else if (cmd === "touch" || cmd === "t") {
+            auto.push({ at: at, k: "on", x: +a[1], y: +a[2] });
+            auto.push({ at: at + 1, k: "off", x: +a[1], y: +a[2] });
+          }
+        });
+        if (!auto.length) auto = null;
+      }
+
+      packZipBlob = file;
+      pack = {
+        title: meta.title || file.name, producer: meta.producername || "?",
+        x: bx, y: by, chains: ch, map: map, auto: auto,
+        zip: z, byPath: byPath, sounds: used, skipped: skipped
+      };
+      decoded = new Map(); stopAll();
+      chain = 1;
+      setMode("pack");
+      showMeta();
+      packnote.textContent = "“" + pack.title + "” 로드됨";
+      packnote.dataset.tone = "ok";
+      predecode();
+      scheduleAutosave();
+    } catch (err) {
+      packnote.textContent = "실패: " + (err && err.message ? err.message : err);
+      packnote.dataset.tone = "bad";
+    }
+  }
+
+  /* 사운드 디코딩 — 눌렀을 때 끊기지 않도록 미리 돌려둔다 */
+  var decodeQueue = [], decoding = false;
+  function predecode() {
+    var seen = {};
+    decodeQueue = [];
+    pack.map.forEach(function (slot) {
+      slot.items.forEach(function (it) {
+        if (!seen[it.path]) { seen[it.path] = 1; decodeQueue.push(it.path); }
+      });
+    });
+    decoding = true; pumpDecode();
+  }
+  async function decodeOne(path) {
+    if (decoded.has(path)) return decoded.get(path);
+    try {
+      var bytes;
+      if (userBlobs.has(path)) {
+        bytes = new Uint8Array(await userBlobs.get(path).arrayBuffer());
+      } else {
+        var f = pack.byPath.get(path);
+        if (!f) return null;
+        bytes = await zipRead(pack.zip, f);
+      }
+      var buf = await ctx.decodeAudioData(bytes.buffer);
+      decoded.set(path, buf);
+      return buf;
+    } catch (e) {
+      decoded.set(path, null);
+      logLines.push("디코드 실패: " + path);
+      renderLog();
+      return null;
+    }
+  }
+  async function pumpDecode() {
+    if (!initAudio()) return;
+    var total = decodeQueue.length, done = 0;
+    while (decodeQueue.length) {
+      var path = decodeQueue.shift();
+      await decodeOne(path);
+      done++;
+      decnote.textContent = "사운드 " + (total - decodeQueue.length) + "/" + total;
+    }
+    decoding = false;
+    decnote.textContent = "사운드 " + decoded.size + "개 준비됨";
+    renderLog();
+    paintPads();
+  }
+
+  /* ── 팩 재생 ── */
+
+  function stopVoiceAt(key, when) {
+    var v = voices.get(key);
+    if (!v) return;
+    try {
+      v.g.gain.setTargetAtTime(0.0001, when, 0.02);
+      v.src.stop(when + 0.12);
+    } catch (e) {}
+    voices.delete(key);
+  }
+  function stopAll() {
+    var now = ctx ? ctx.currentTime : 0;
+    voices.forEach(function (v, k) { stopVoiceAt(k, now); });
+    voices.clear();
+  }
+
+  /* 한 칸을 지정한 오디오 시각에 울린다.
+     when 을 받는 이유: 자동 재생은 오디오 시계에 미리 예약해야
+     탭이 백그라운드로 가도 박자가 안 흐트러진다. */
+  function packTrigger(c, x, y, when) {
+    if (!pack) return false;
+    var slot = pack.map.get(c + ":" + x + ":" + y);
+    if (!slot) return false;
+    var it = slot.items[slot.i % slot.items.length];
+    slot.i++;
+    var buf = decoded.get(it.path);
+    if (!buf) { decodeOne(it.path); return true; }   // 아직 디코딩 전이면 이번 타는 건너뜀
+    var key = c + ":" + x + ":" + y;
+    stopVoiceAt(key, when);
+    var src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = buf; g.gain.value = 1;
+    src.connect(g); g.connect(master);
+    if (it.loop === 0) { src.loop = true; src.start(when); }
+    else if (it.loop >= 2) { src.loop = true; src.start(when); src.stop(when + buf.duration * it.loop); }
+    else src.start(when);
+    voices.set(key, { src: src, g: g, inf: it.loop === 0 });
+    if (it.worm) src.onended = function () { setChain(it.worm); };
+    return true;
+  }
+  function packPress(x, y) { return packTrigger(chain, x, y, ctx.currentTime); }
+  function packReleaseAt(c, x, y, when) {
+    var key = c + ":" + x + ":" + y;
+    var v = voices.get(key);
+    if (v && v.inf) stopVoiceAt(key, when);   // 무한 루프만 손을 떼면 멈춘다
+  }
+  function packRelease(x, y) { packReleaseAt(chain, x, y, ctx.currentTime); }
+
+  /* ── autoPlay 엔진 ──
+     rAF 로 시간을 재면 탭이 가려지는 순간 곡이 멈춘다.
+     그래서 오디오 시계에 앞당겨 예약하는 방식으로 돌린다. */
+  var apOn = false, apIdx = 0, apT0 = 0, apChain = 1, apTimer = null;
+  var AP_LOOKAHEAD = 1.2;   // 초 — 백그라운드 스로틀링을 버틸 만큼
+
+  function autoStart() {
+    if (!pack || !pack.auto) return;
+    if (!initAudio()) return;
+    wake();
+    stopAll();
+    apOn = true; apIdx = 0; apChain = 1;
+    apT0 = ctx.currentTime + 0.15;
+    updatePlay();
+    apTimer = setInterval(apPump, 60);
+    apPump();
+  }
+  function autoStop() {
+    apOn = false;
+    clearInterval(apTimer); apTimer = null;
+    updatePlay();
+  }
+  function apPump() {
+    if (!apOn || !pack || !pack.auto) return;
+    var a = pack.auto, horizon = ctx.currentTime + AP_LOOKAHEAD;
+    while (apIdx < a.length) {
+      var e = a[apIdx];
+      var when = apT0 + e.at / 1000;
+      if (when > horizon) break;
+      apIdx++;
+      if (e.k === "c") {
+        apChain = e.n;                       // 예약은 즉시 이 체인 기준으로
+        scheduleUi(when, (function (n) { return function () { setChain(n); }; })(e.n));
+      } else if (e.k === "on") {
+        packTrigger(apChain, e.x, e.y, when);
+        scheduleUi(when, (function (x, y) { return function () { flash(x, y); }; })(e.x, e.y));
+      } else {
+        packReleaseAt(apChain, e.x, e.y, when);
+      }
+    }
+    if (apIdx >= a.length) {
+      var endAt = apT0 + a[a.length - 1].at / 1000 + 0.4;
+      if (ctx.currentTime >= endAt) autoStop();
+    }
+  }
+  /* 소리는 오디오 시계에, 화면은 그때 맞춰 따로 */
+  function scheduleUi(when, fn) {
+    var ms = (when - ctx.currentTime) * 1000;
+    setTimeout(fn, ms > 0 ? ms : 0);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     5. 그리드 — 남은 화면에 딱 맞게 칸 크기를 계산한다
+     ═══════════════════════════════════════════════════════ */
+  var mode = "synth";
+  var COLS = 8, ROWS_N = 8;
+  var pads = [];
+  var logLines = [];
+
+  function $(id) { return document.getElementById(id); }
+
+  var grid = $("grid"), rail = $("rail"), device = $("device"), stage = $("stage");
+  var strip = $("strip"), ttl = $("ttl"), sheetTitle = $("sheettitle");
+  var playBtn = $("play"), stopBtn = $("stopall");
+  var runBtn = playBtn, autoBtn = playBtn;      /* 재생 버튼 하나를 모드에 따라 나눠 쓴다 */
+  var bpmEl = $("bpm"), bpmV = $("bpmv"), bpmRow = $("bpmrow");
+  var volEl = $("vol"), volV = $("volv");
+  var midis = $("midis"), packnote = $("packnote"), decnote = $("decnote");
+  var metaEl = $("meta"), logEl = $("log");
+  var legendEl = $("legend"), legendBox = $("legendbox");
+  var flipRow = $("flipyrow"), glideEl = $("glide");
+  var sheet = $("sheet"), scrim = $("scrim");
+  var beatEls = [], chainChips = [];
+  var chordEl = null, swpEl = null, swpBar = null;
+
+  function padAt(r, c) { return pads[r * COLS + c]; }
+  function xyToPad(x, y) {
+    if (!pack) return null;
+    var r = flipY ? (pack.y - y) : (y - 1);
+    return (r >= 0 && r < ROWS_N && x >= 1 && x <= COLS) ? padAt(r, x - 1) : null;
+  }
+
+  /* .device 는 여백(칸의 13%)과 칸 사이 간격(10%)을 전부 칸 단위로 쓴다.
+     그래서 남은 폭·높이를 그 단위 수로 나누면 칸 크기가 바로 나온다. */
+  function fitGrid() {
+    var box = stage.getBoundingClientRect();
+    var railW = getComputedStyle(rail).display === "none" ? 0 : 32;
+    /* 기계 여백 0.14*2 + 그리드 여백 0.045*2 + 칸 사이 */
+    var hUnits = ROWS_N + 0.105 * (ROWS_N - 1) + 0.37;
+    /* 높이를 0 이나 말도 안 되게 작게 주는 브라우저·프레임이 있다.
+       그럴 땐 높이를 버리고 폭만 보고 칸을 정한다 —
+       넘쳐서 조금 잘리는 편이 통째로 안 보이는 것보다 낫다. */
+    var w = box.width || document.documentElement.clientWidth || 360;
+    var h = box.height;
+    if (!h || h < 160) h = w;
+
+    /* 정사각형을 고집하지 않는다. 가로는 폭에서, 세로는 높이에서
+       따로 구해 화면을 꽉 채운다. 다만 너무 납작해지지는 않게 묶어둔다. */
+    var span = COLS + 0.09 * (COLS - 1);        // 가로로 칸이 차지하는 몫
+    var widthFor = function (hh) {              // 여백은 세로 기준이라 빼고 나눈다
+      return (w - 4 - railW - 0.37 * hh) / span;
+    };
+    var ch = (h - 4) / hUnits;
+    if (!isFinite(ch) || ch < 22) ch = 22;
+    var cw = widthFor(ch);
+    if (!isFinite(cw) || cw < 22) cw = 22;
+    if (cw > ch * 1.7) cw = ch * 1.7;           // 너무 납작해지지 않게
+    if (ch > cw * 1.4) {                        // 너무 길쭉해지지도 않게
+      ch = cw * 1.4;
+      cw = Math.min(widthFor(ch), ch * 1.7);
+      if (!isFinite(cw) || cw < 22) cw = 22;
+    }
+    var st = document.documentElement.style;
+    st.setProperty("--cellw", Math.floor(cw) + "px");
+    st.setProperty("--cellh", Math.floor(ch) + "px");
+  }
+
+  function buildGrid() {
+    grid.innerHTML = ""; rail.innerHTML = ""; pads = [];
+    grid.style.gridTemplateColumns = "repeat(" + COLS + ", var(--cellw))";
+    grid.style.gridTemplateRows = "repeat(" + ROWS_N + ", var(--cellh))";
+    rail.style.gridTemplateRows = "repeat(" + ROWS_N + ", var(--cellh))";
+
+    for (var r = 0; r < ROWS_N; r++) {
+      var lab = document.createElement("span");
+      lab.textContent = mode === "synth" ? SYNTH_ROWS[r].label : (r + 1) + "줄";
+      rail.appendChild(lab);
+    }
+    for (var rr = 0; rr < ROWS_N; rr++) {
+      for (var cc = 0; cc < COLS; cc++) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "pad";
+        b.dataset.r = rr; b.dataset.c = cc; b.dataset.lit = "0";
+        b.innerHTML = '<span class="key"></span><span class="cap"></span>';
+        grid.appendChild(b); pads.push(b);
+      }
+    }
+    fitGrid();
+    paintPads();
+  }
+
+  function capFor(r, c) {
+    if (mode === "synth") {
+      var row = SYNTH_ROWS[r];
+      if (row.kind === "loop") return bank()[row.key][c].name;
+      if (row.kind === "perc") return PERC[c];
+      if (row.kind === "fx")   return FXN[c];
+      return ["라", "시", "도", "레", "미", "파", "솔", "라"][c] || "";
+    }
+    var y = flipY ? (pack.y - r) : (r + 1);
+    var slot = pack.map.get(chain + ":" + (c + 1) + ":" + y);
+    if (!slot) return "";
+    var name = slot.items[0].label.split("/").pop().replace(/\.[^.]+$/, "");
+    return name.length > 9 ? name.slice(0, 8) + "…" : name;
+  }
+
+  function paintPads() {
+    for (var r = 0; r < ROWS_N; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var p = padAt(r, c);
+        if (!p) continue;
+        var hueVar = mode === "synth" ? SYNTH_ROWS[r].hue : null;
+        var empty = "0";
+        if (mode === "pack") {
+          var y = flipY ? (pack.y - r) : (r + 1);
+          var has = pack.map.has(chain + ":" + (c + 1) + ":" + y);
+          hueVar = has ? "--f-pack" : "--f-empty";
+          empty = has ? "0" : "1";
+        }
+        var cap = capFor(r, c);
+        p.style.setProperty("--hue", "var(" + hueVar + ")");
+        p.dataset.empty = empty;
+        p.querySelector(".cap").textContent = cap;
+        p.querySelector(".key").textContent =
+          (r < 4 && c < 8) ? KEYROWS[r][c]
+          : (r >= 4 && r < 8 && c < 8) ? "⇧" + KEYROWS[r - 4][c] : "";
+        p.setAttribute("aria-label",
+          (mode === "synth" ? SYNTH_ROWS[r].label : chain + "페이지") + " " + (cap || "빈 칸"));
+      }
+    }
+    if (mode === "synth") syncLights();
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     6. 입력 — 멀티터치 + 손가락 훑기
+     패드마다 리스너를 다는 대신 좌표로 칸을 찾는다.
+     그래야 누른 채 옆 칸으로 넘어가는 연주가 된다.
+     ═══════════════════════════════════════════════════════ */
+  var touchMap = new Map();   // pointerId -> 지금 짚고 있는 패드
+
+  function padFromPoint(x, y) {
+    var el = document.elementFromPoint(x, y);
+    while (el && el !== document.body) {
+      if (el.classList && el.classList.contains("pad")) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  grid.addEventListener("pointerdown", function (ev) {
+    var p = padFromPoint(ev.clientX, ev.clientY);
+    if (!p) return;
+    ev.preventDefault();
+    touchMap.set(ev.pointerId, p);
+    p.classList.add("down");
+    press(+p.dataset.r, +p.dataset.c);
+  });
+
+  window.addEventListener("pointermove", function (ev) {
+    if (!touchMap.has(ev.pointerId)) return;
+    var prev = touchMap.get(ev.pointerId);
+    var p = padFromPoint(ev.clientX, ev.clientY);
+    if (!p || p === prev) return;
+    prev.classList.remove("down");
+    release(+prev.dataset.r, +prev.dataset.c);
+    touchMap.set(ev.pointerId, p);
+    if (!glideEl.checked || armed) return;
+    /* 훑기는 원샷과 팩에만. 루프 칸은 지나가도 켜지지 않는다 —
+       스치기만 해도 클립이 바뀌면 연주가 아니라 사고다. */
+    var r = +p.dataset.r;
+    if (mode === "pack" || r >= 4) {
+      p.classList.add("down");
+      press(r, +p.dataset.c);
+    }
+  });
+
+  function endPointer(ev) {
+    var p = touchMap.get(ev.pointerId);
+    if (!p) return;
+    touchMap.delete(ev.pointerId);
+    p.classList.remove("down");
+    release(+p.dataset.r, +p.dataset.c);
+  }
+  window.addEventListener("pointerup", endPointer);
+  window.addEventListener("pointercancel", endPointer);
+
+  function press(r, c) {
+    if (!initAudio()) return;
+    wake();
+    if (eraseOn) {                         // 칸 지우는 중
+      eraseCell(r, c);
+      return;
+    }
+    if (placeArmed) {                      // 음악 넣을 칸을 고르는 중
+      placeTarget = { r: r, c: c };
+      disarmPlace();
+      pick();                              // 사용자 조작 흐름 안이라 파일 선택창이 열린다
+      return;
+    }
+    if (armed) { startRec(r, c); return; }
+    if (mode === "pack") {
+      var y = flipY ? (pack.y - r) : (r + 1);
+      packPress(c + 1, y);
+      flashPad(padAt(r, c));
+      return;
+    }
+    var row = SYNTH_ROWS[r], now = ctx.currentTime + 0.001;
+    if (row.kind === "loop") {
+      if (!playing) start();
+      if (active[r] === c) {
+        active[r] = null;
+        pending = pending.filter(function (p) { return p.row !== r; });
+      } else {
+        pending = pending.filter(function (p) { return p.row !== r; });
+        pending.push({ row: r, col: c });
+      }
+      syncLights();
+      return;
+    }
+    if (row.kind === "perc") {
+      [kick, snare, clap, function (t, v) { hat(t, v, false); },
+       function (t, v) { hat(t, v, true); }, tom, rim, crash][c](now, 1);
+    } else if (row.kind === "fx") fx(c, now);
+    else leadNote(deg(c) + (row.oct ? 12 : 0) - 12, now, 0.55, 1.4);
+    flashPad(padAt(r, c));
+  }
+
+  function release(r, c) {
+    if (armed) { stopRec(); return; }
+    if (mode !== "pack" || !pack) return;
+    var y = flipY ? (pack.y - r) : (r + 1);
+    packRelease(c + 1, y);
+  }
+
+  function flashPad(p) {
+    if (!p) return;
+    p.dataset.lit = "1";
+    var r = +p.dataset.r, c = +p.dataset.c;
+    midiLight(r, c, "1");
+    setTimeout(function () {
+      if (mode === "synth" && r < 4) syncLights();
+      else { p.dataset.lit = "0"; midiLight(r, c, "0"); }
+    }, 150);
+  }
+  function flash(x, y) { flashPad(xyToPad(x, y)); }
+
+  /* 내 음원을 패드에 붙이기 */
+  async function assignFiles(files, r, c) {
+    if (!initAudio()) return;
+    if (mode !== "pack" || !pack) makeBlankPack();
+    var i = 0;
+    for (var k = 0; k < files.length; k++) {
+      var f = files[k];
+      if (!/^audio\//.test(f.type) && !/\.(wav|mp3|ogg|m4a|flac|aac|opus)$/i.test(f.name)) continue;
+      var rr = r + Math.floor((c + i) / COLS), cc = (c + i) % COLS;
+      if (rr >= ROWS_N) break;
+      try {
+        var buf = await ctx.decodeAudioData(await f.arrayBuffer());
+        var path = "user/" + f.name;
+        decoded.set(path, buf);
+        userBlobs.set(path, f);
+        var y = flipY ? (pack.y - rr) : (rr + 1);
+        pack.map.set(chain + ":" + (cc + 1) + ":" + y,
+                     { i: 0, items: [{ path: path, loop: 1, worm: 0, label: f.name }] });
+      } catch (e) {
+        logLines.push("읽기 실패: " + f.name); renderLog();
+      }
+      i++;
+    }
+    paintPads();
+    packnote.textContent = "음원 " + i + "개 배치됨";
+    packnote.dataset.tone = "ok";
+    if (i) {
+      recNote("음악 " + i + "개 넣었어요", "ok");
+      setTimeout(function () { if (!armed && !placeArmed) recNoteClear(); }, 2400);
+    } else {
+      recNote("소리 파일이 아니에요", "warn");
+      setTimeout(function () { if (!armed && !placeArmed) recNoteClear(); }, 2400);
+    }
+    scheduleAutosave();
+  }
+
+  function makeBlankPack() {
+    pack = { title: "내 패드", producer: "나", x: 8, y: 8, chains: 4,
+             map: new Map(), auto: null, zip: null, byPath: new Map(),
+             sounds: 0, skipped: 0 };
+    decoded = new Map(); userBlobs = new Map(); packZipBlob = null; chain = 1;
+    setMode("pack"); showMeta();
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     7. 내장 신스 시퀀서
+     ═══════════════════════════════════════════════════════ */
+  var bpm = 102, playing = false, timer = null;
+  var step = 0, absStep = 0, nextTime = 0;
+  var active = [null, null, null, null];
+  var pending = [];
+  var visQ = [];
+
+  function spb() { return 60 / bpm / 4; }
+
+  /* 16마디에 걸쳐 260Hz ~ 9kHz 를 왕복하는 컷오프 */
+  function sweepCut(a) {
+    var x = 0.5 - 0.5 * Math.cos(2 * Math.PI * (a / 256));
+    return 260 * Math.pow(9000 / 260, x);
+  }
+
+  function scheduleStep(st, t, abs) {
+    var inBar = st % 16;
+    var B = bank();
+    if (inBar === 0 && pending.length) {
+      pending.forEach(function (p) { active[p.row] = p.col; });
+      pending = []; syncLights();
+    }
+    var chd = B.prog[Math.floor(st / 16) % 4];
+    if (active[0] !== null) {
+      var d = B.drums[active[0]];
+      if (d.k.indexOf(inBar) >= 0) kick(t, 1);
+      if (d.s.indexOf(inBar) >= 0) snare(t, 0.9);
+      if (d.c.indexOf(inBar) >= 0) clap(t, 0.8);
+      if (d.h.indexOf(inBar) >= 0) hat(t, inBar % 4 === 0 ? 1 : 0.6, false);
+      if (d.o.indexOf(inBar) >= 0) hat(t, 0.7, true);
+    }
+    if (active[1] !== null) {
+      B.bass[active[1]].n.forEach(function (e) {
+        if (e[0] === inBar) bassNote(chd.root + 12 + e[1], t, e[2] * spb() * 0.9, 1);
+      });
+    }
+    if (active[2] !== null) {
+      var cc = B.chords[active[2]];
+      if (cc.hits.indexOf(inBar) >= 0) {
+        var sw = (cc.sweep && sweepOn) ? sweepCut(abs) : 0;
+        if (cc.mode === "hold") {
+          chordVoice(chd.notes, t, spb() * 16 * 0.95, 1, !!cc.swell,
+                     sw, sw ? sweepCut(abs + 16) : 0);
+        } else if (cc.mode === "stab") {
+          chordVoice(chd.notes, t, spb() * 1.6, 1.15, false, sw);
+        } else {
+          var idx = cc.hits.indexOf(inBar);
+          var order = cc.dir > 0 ? idx % 3 : 2 - (idx % 3);
+          chordVoice([chd.notes[order % chd.notes.length] + 12], t, spb() * 2.2, 1.5, false, sw);
+        }
+      }
+    }
+    if (active[3] !== null) {
+      B.lead[active[3]].n.forEach(function (e) {
+        if (e[0] === inBar) leadNote(deg(e[1]), t, e[2] * spb() * 0.92, 1);
+      });
+    }
+    visQ.push({ t: t, st: st, abs: abs });
+  }
+
+  function tick() {
+    if (!playing) return;
+    while (nextTime < ctx.currentTime + 0.12) {
+      scheduleStep(step, nextTime, absStep);
+      nextTime += spb();
+      step = (step + 1) % 64;
+      absStep++;
+    }
+  }
+  function start() {
+    if (!initAudio()) return;
+    wake();
+    if (playing) return;
+    playing = true; step = 0; absStep = 0; nextTime = ctx.currentTime + 0.08;
+    timer = setInterval(tick, 25);
+    updatePlay();
+  }
+  function stopSeq() {
+    playing = false; clearInterval(timer);
+    updatePlay();
+    beatEls.forEach(function (b) { b.classList.remove("lit"); });
+  }
+  function panicAll() {
+    active = [null, null, null, null]; pending = [];
+    stopSeq(); syncLights();
+  }
+
+  function syncLights() {
+    if (mode !== "synth") return;
+    for (var r = 0; r < 4; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var lit = active[r] === c ? "1" : "0";
+        if (pending.some(function (p) { return p.row === r && p.col === c; })) lit = "2";
+        var p = padAt(r, c);
+        if (p && p.dataset.lit !== lit) { p.dataset.lit = lit; midiLight(r, c, lit); }
+      }
+    }
+  }
+
+  function frame() {
+    if (ctx && visQ.length) {
+      var t = ctx.currentTime;
+      while (visQ.length && visQ[0].t <= t) {
+        var e = visQ.shift();
+        var beat = Math.floor((e.st % 16) / 4);
+        beatEls.forEach(function (b, i) { b.classList.toggle("lit", i === beat); });
+        if (chordEl) {
+          var pg = bank().prog[Math.floor(e.st / 16) % 4];
+          chordEl.textContent = pg.name || "—";
+        }
+        if (swpBar && swpEl && !swpEl.hidden) {
+          var x = sweepOn ? (0.5 - 0.5 * Math.cos(2 * Math.PI * (e.abs / 256))) : 0;
+          swpBar.style.width = (x * 100).toFixed(1) + "%";
+        }
+        if (e.st % 16 === 0 && mode === "synth") {
+          for (var r = 0; r < 4; r++) {
+            if (active[r] !== null) {
+              var p = padAt(r, active[r]);
+              if (p) { p.classList.remove("pulse"); void p.offsetWidth; p.classList.add("pulse"); }
+            }
+          }
+        }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  /* ═══════════════════════════════════════════════════════
+     8. 모드 전환 · 시트
+     ═══════════════════════════════════════════════════════ */
+  function setMode(m) {
+    mode = m;
+    if (m === "pack") {
+      stopSeq();
+      COLS = pack.x; ROWS_N = pack.y;
+      ttl.textContent = pack.title;
+      playBtn.disabled = !pack.auto;
+      $("tosynth").disabled = false;
+      bpmRow.hidden = true; flipRow.hidden = false;
+      legendBox.hidden = true; metaEl.hidden = false; logEl.hidden = false;
+    } else {
+      stopAll(); autoStop();
+      COLS = 8; ROWS_N = 8;
+      ttl.textContent = "기본 소리";
+      playBtn.disabled = false;
+      $("tosynth").disabled = true;
+      bpmRow.hidden = false; flipRow.hidden = true;
+      legendBox.hidden = false; metaEl.hidden = true; logEl.hidden = true;
+    }
+    if (armed) recNote("녹음 대기 — 패드를 누르고 있으세요", "warn");
+    sheetTitle.textContent = (mode === "pack" && pack) ? pack.title : "기본 소리";
+    buildStrip();
+    buildGrid();
+    updatePlay();
+  }
+
+  /* 그리드 위 얇은 띠 — 신스면 박자등, 팩이면 체인 칩 */
+  function buildStrip() {
+    strip.innerHTML = ""; beatEls = []; chainChips = [];
+    var lab = document.createElement("span");
+    lab.className = "striplabel";
+    strip.appendChild(lab);
+    if (mode === "pack") {
+      lab.textContent = "페이지";
+      for (var i = 1; i <= pack.chains; i++) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "chip"; b.textContent = i;
+        b.dataset.on = (i === chain) ? "1" : "0";
+        b.setAttribute("aria-label", i + "페이지");
+        (function (n) { b.addEventListener("click", function () { setChain(n); }); })(i);
+        strip.appendChild(b); chainChips.push(b);
+      }
+    } else {
+      lab.textContent = "박자";
+      var wrap = document.createElement("span");
+      wrap.className = "beat";
+      for (var k = 0; k < 4; k++) {
+        var d = document.createElement("i");
+        wrap.appendChild(d); beatEls.push(d);
+      }
+      strip.appendChild(wrap);
+
+      chordEl = document.createElement("span");
+      chordEl.className = "chordv";
+      chordEl.textContent = bank().prog[0].name || "—";
+      chordEl.title = "지금 울리는 화음";
+      strip.appendChild(chordEl);
+
+      swpEl = document.createElement("span");
+      swpEl.className = "swp";
+      swpEl.title = "필터 스윕 위치 (16마디 주기)";
+      swpBar = document.createElement("i");
+      swpEl.appendChild(swpBar);
+      swpEl.hidden = (bank().id !== "french");
+      strip.appendChild(swpEl);
+
+      var bl = document.createElement("span");
+      bl.className = "striplabel";
+      bl.textContent = "소리묶음";
+      bl.style.marginLeft = "0.5rem";
+      strip.appendChild(bl);
+      BANKS.forEach(function (bk, i) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "chip"; b.textContent = bk.name;
+        b.dataset.on = (i === bankIdx) ? "1" : "0";
+        b.style.minWidth = "0";
+        b.addEventListener("click", function () { setBank(i); });
+        strip.appendChild(b);
+      });
+    }
+  }
+
+  function setBank(i) {
+    bankIdx = i;
+    pumpAmt = BANKS[i].pump;
+    if (duck) {
+      duck.gain.cancelScheduledValues(ctx.currentTime);
+      duck.gain.setValueAtTime(1, ctx.currentTime);
+    }
+    buildStrip();
+    paintPads();
+  }
+
+  function setChain(n) {
+    if (!pack || n < 1 || n > pack.chains) return;
+    chain = n;
+    chainChips.forEach(function (b, i) { b.dataset.on = (i + 1 === n) ? "1" : "0"; });
+    paintPads();
+  }
+
+  /* 재생 버튼은 모드에 따라 시퀀서 / 자동재생을 맡는다 */
+  function updatePlay() {
+    if (mode === "pack") {
+      playBtn.dataset.on = apOn ? "1" : "0";
+      playBtn.textContent = apOn ? "■" : "▶";
+      playBtn.title = pack && pack.auto ? "자동 재생" : "이 팩에는 autoPlay가 없습니다";
+    } else {
+      playBtn.dataset.on = playing ? "1" : "0";
+      playBtn.textContent = playing ? "❚❚" : "▶";
+      playBtn.title = "시퀀서 재생";
+    }
+  }
+
+  function showMeta() {
+    metaEl.innerHTML = "";
+    [["제목", pack.title], ["제작", pack.producer],
+     ["그리드", pack.x + " × " + pack.y], ["체인", String(pack.chains)],
+     ["매핑", pack.sounds + "칸" + (pack.skipped ? " (" + pack.skipped + "줄 건너뜀)" : "")],
+     ["자동재생", pack.auto ? pack.auto.length + "개 이벤트" : "없음"]
+    ].forEach(function (row) {
+      var dt = document.createElement("dt"); dt.textContent = row[0];
+      var dd = document.createElement("dd"); dd.textContent = row[1];
+      metaEl.appendChild(dt); metaEl.appendChild(dd);
+    });
+    renderLog();
+  }
+
+  function renderLog() {
+    logEl.innerHTML = "";
+    if (!logLines.length) { logEl.hidden = true; return; }
+    logEl.hidden = false;
+    logLines.slice(0, 40).forEach(function (l) {
+      var d = document.createElement("div"); d.textContent = l; logEl.appendChild(d);
+    });
+    if (logLines.length > 40) {
+      var d = document.createElement("div");
+      d.textContent = "… 외 " + (logLines.length - 40) + "건";
+      logEl.appendChild(d);
+    }
+  }
+
+  [["--f-drum", "드럼", "쿵짝 리듬 8가지 — 누르면 계속 돌아갑니다"],
+   ["--f-bass", "베이스", "낮고 굵은 소리 8가지"],
+   ["--f-chord", "화음", "여러 음이 겹친 소리 8가지"],
+   ["--f-lead", "멜로디", "노래하는 소리 8가지"],
+   ["--f-perc", "타악기", "한 번씩 치는 북 소리"],
+   ["--f-fx", "효과음", "쾅, 휙, 사이렌 같은 소리"],
+   ["--f-note", "낮은음 / 높은음", "라 시 도 레 미 파 솔 — 직접 연주"]
+  ].forEach(function (row) {
+    var li = document.createElement("li");
+    var dot = document.createElement("span");
+    dot.className = "dot"; dot.style.background = "var(" + row[0] + ")";
+    var bEl = document.createElement("b"); bEl.textContent = row[1];
+    var txt = document.createElement("span"); txt.textContent = row[2];
+    li.appendChild(dot); li.appendChild(bEl); li.appendChild(txt);
+    legendEl.appendChild(li);
+  });
+
+  /* ═══════════════════════════════════════════════════════
+     9. 컨트롤 배선
+     ═══════════════════════════════════════════════════════ */
+  playBtn.addEventListener("click", function () {
+    initAudio(); wake();
+    if (mode === "pack") { apOn ? autoStop() : autoStart(); }
+    else { playing ? stopSeq() : start(); }
+    updatePlay();
+  });
+  stopBtn.addEventListener("click", function () {
+    if (mode === "pack") { autoStop(); stopAll(); }
+    else panicAll();
+    updatePlay();
+  });
+  $("tosynth").addEventListener("click", function () {
+    if (eraseOn) toggleErase();
+    if (placeArmed) disarmPlace();
+    setMode("synth"); closeSheet();
+  });
+
+  function openSheet() { sheet.classList.add("open"); scrim.classList.add("open"); }
+  function closeSheet() { sheet.classList.remove("open"); scrim.classList.remove("open"); }
+  $("settings").addEventListener("click", openSheet);
+  $("closesheet").addEventListener("click", closeSheet);
+  scrim.addEventListener("click", closeSheet);
+
+  bpmEl.addEventListener("input", function () { bpm = +bpmEl.value; bpmV.textContent = bpm; });
+  volEl.addEventListener("input", function () {
+    volV.textContent = volEl.value;
+    if (outGain) outGain.gain.value = volEl.value / 100 * 0.9;
+  });
+  $("pump").addEventListener("change", function (e) {
+    pumpOn = e.target.checked;
+    if (duck && !pumpOn) {
+      duck.gain.cancelScheduledValues(ctx.currentTime);
+      duck.gain.setValueAtTime(1, ctx.currentTime);
+    }
+  });
+  $("sweepon").addEventListener("change", function (e) { sweepOn = e.target.checked; });
+  $("flipy").addEventListener("change", function (e) {
+    flipY = e.target.checked; paintPads(); scheduleAutosave();
+  });
+
+  var picker = document.createElement("input");
+  picker.type = "file"; picker.accept = ".zip,application/zip,audio/*"; picker.multiple = true;
+  picker.style.display = "none";
+  document.body.appendChild(picker);
+  function pick() { initAudio(); wake(); picker.click(); }
+  $("openpack2").addEventListener("click", pick);   // 시트의 유니팩 열기
+  picker.addEventListener("change", function () {
+    var fs = [].slice.call(picker.files);
+    picker.value = "";
+    var tgt = placeTarget; placeTarget = null;
+    if (!fs.length) return;
+    var zipf = fs.filter(function (f) { return /\.zip$/i.test(f.name) || f.type === "application/zip"; });
+    if (zipf.length) { loadPack(zipf[0]); closeSheet(); }
+    else assignFiles(fs, tgt ? tgt.r : 0, tgt ? tgt.c : 0);
+  });
+
+  function takeDrop(ev) {
+    ev.preventDefault();
+    device.classList.remove("drop");
+    var fs = [].slice.call(ev.dataTransfer.files);
+    if (!fs.length) return;
+    initAudio(); wake();
+    var zipf = fs.filter(function (f) { return /\.zip$/i.test(f.name); });
+    if (zipf.length) { loadPack(zipf[0]); return; }
+    var p = padFromPoint(ev.clientX, ev.clientY);
+    assignFiles(fs, p ? +p.dataset.r : 0, p ? +p.dataset.c : 0);
+  }
+  ["dragenter", "dragover"].forEach(function (e) {
+    window.addEventListener(e, function (ev) { ev.preventDefault(); device.classList.add("drop"); });
+  });
+  window.addEventListener("dragleave", function () { device.classList.remove("drop"); });
+  window.addEventListener("drop", takeDrop);
+
+  var KEYMAP = {};
+  KEYROWS.forEach(function (row, r) { row.forEach(function (k, c) { KEYMAP[k] = [r, c]; }); });
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.repeat || ev.target.tagName === "INPUT") return;
+    if (ev.code === "Escape") { closeSheet(); return; }
+    if (ev.code === "Space") {
+      ev.preventDefault();
+      if (mode === "pack") { apOn ? autoStop() : autoStart(); }
+      else { playing ? stopSeq() : start(); }
+      updatePlay(); return;
+    }
+    if (mode === "pack" && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
+      ev.preventDefault(); setChain(chain + (ev.key === "ArrowRight" ? 1 : -1)); return;
+    }
+    var m = KEYMAP[ev.key.toLowerCase()];
+    if (!m) return;
+    ev.preventDefault();
+    var r = m[0] + (ev.shiftKey ? 4 : 0);
+    if (r < ROWS_N && m[1] < COLS) {
+      var p = padAt(r, m[1]); if (p) p.classList.add("down");
+      press(r, m[1]);
+    }
+  });
+  document.addEventListener("keyup", function (ev) {
+    var m = KEYMAP[ev.key.toLowerCase()];
+    if (!m) return;
+    [0, 4].forEach(function (o) {
+      var r = m[0] + o;
+      if (r < ROWS_N && m[1] < COLS) {
+        var p = padAt(r, m[1]); if (p) p.classList.remove("down");
+        release(r, m[1]);
+      }
+    });
+  });
+
+  window.addEventListener("resize", fitGrid);
+  /* 첫 레이아웃이 확정된 뒤 한 번 더 — 폰트가 늦게 잡히거나
+     ResizeObserver 가 없는 환경에서도 칸이 화면에 맞도록 */
+  requestAnimationFrame(fitGrid);
+  window.addEventListener("load", fitGrid);
+  window.addEventListener("orientationchange", function () { setTimeout(fitGrid, 120); });
+  if (window.ResizeObserver) new ResizeObserver(fitGrid).observe(stage);
+
+  /* 재생 상태가 바뀌면 버튼 표시도 따라간다 */
+  setInterval(updatePlay, 250);
+
+  /* ═══════════════════════════════════════════════════════
+     10. 마이크 녹음
+     ● 로 대기 상태를 만든 뒤, 패드를 누르고 있는 동안 녹음한다.
+     떼는 순간 디코딩해서 그 칸에 붙이고 저장까지 건다.
+     ═══════════════════════════════════════════════════════ */
+  var armed = false, micStream = null, recorder = null, recChunks = [];
+  var recPad = null, recStart = 0, recTimer = null, recSeq = 0;
+  var meterAn = null, meterData = null;
+  var recBtn = $("rec"), meterEl = $("meter"), meterBar = $("meterbar");
+  var titleSaved = "";
+
+  function recNote(txt, tone) {
+    ttl.textContent = txt;
+    if (tone) ttl.dataset.tone = tone; else delete ttl.dataset.tone;
+  }
+  function recNoteClear() {
+    if (eraseOn) { recNote("지울 칸을 누르세요", "warn"); return; }
+    if (placeArmed) { recNote("음악을 넣을 칸을 누르세요", "ok"); return; }
+    delete ttl.dataset.tone;
+    ttl.textContent = (mode === "pack" && pack) ? pack.title : "기본 소리";
+  }
+
+  async function armRec() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      recNote("마이크 불가 — https 나 localhost 로 열어주세요", "bad");
+      setTimeout(recNoteClear, 3200);
+      return;
+    }
+    if (!initAudio()) return;
+    wake();
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+    } catch (e) {
+      recNote("마이크 거부됨 — 브라우저 권한 확인", "bad");
+      setTimeout(recNoteClear, 3200);
+      return;
+    }
+    armed = true;
+    recBtn.dataset.on = "1";
+    grid.classList.add("arm");
+    meterEl.hidden = false;
+    titleSaved = ttl.textContent;
+    recNote("녹음 대기 — 패드를 누르고 있으세요", "warn");
+
+    /* 레벨만 본다. 출력에는 절대 연결하지 않는다 (하울링) */
+    var src = ctx.createMediaStreamSource(micStream);
+    meterAn = ctx.createAnalyser();
+    meterAn.fftSize = 512;
+    src.connect(meterAn);
+    meterData = new Uint8Array(meterAn.fftSize);
+    meterLoop();
+  }
+
+  function disarmRec() {
+    if (recorder) { try { recorder.stop(); } catch (e) {} }
+    armed = false;
+    recBtn.dataset.on = "0";
+    grid.classList.remove("arm");
+    meterEl.hidden = true;
+    meterBar.style.width = "0%";
+    if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+    meterAn = null;
+    recNoteClear();
+  }
+
+  function meterLoop() {
+    if (!armed || !meterAn) return;
+    meterAn.getByteTimeDomainData(meterData);
+    var peak = 0;
+    for (var i = 0; i < meterData.length; i++) {
+      var v = Math.abs(meterData[i] - 128);
+      if (v > peak) peak = v;
+    }
+    meterBar.style.width = Math.min(100, (peak / 128) * 160) + "%";
+    requestAnimationFrame(meterLoop);
+  }
+
+  function startRec(r, c) {
+    if (recorder || !micStream) return;
+    var mime = "";
+    ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+      .some(function (m) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) { mime = m; return true; }
+        return false;
+      });
+    try {
+      recorder = mime ? new MediaRecorder(micStream, { mimeType: mime })
+                      : new MediaRecorder(micStream);
+    } catch (e) {
+      recNote("녹음 시작 실패", "bad");
+      recorder = null; return;
+    }
+    recPad = { r: r, c: c };
+    recChunks = [];
+    recorder.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+    recorder.onstop = finishRec;
+    recorder.start();
+    recStart = performance.now();
+    var p = padAt(r, c);
+    if (p) { p.style.setProperty("--hue", "var(--bad)"); p.dataset.lit = "1"; }
+    recTimer = setInterval(function () {
+      var ms = performance.now() - recStart;
+      recNote("● 녹음 중 " + (ms / 1000).toFixed(1) + "초", "bad");
+      if (ms > 20000) stopRec();          // 20초에서 자른다
+    }, 100);
+  }
+
+  function stopRec() {
+    if (!recorder) return;
+    try { recorder.stop(); } catch (e) {}
+  }
+
+  async function finishRec() {
+    clearInterval(recTimer); recTimer = null;
+    var pad = recPad, dur = performance.now() - recStart;
+    var type = (recorder && recorder.mimeType) || "audio/webm";
+    recPad = null; recorder = null;
+    var blob = new Blob(recChunks, { type: type });
+    recChunks = [];
+
+    if (pad) {
+      var p0 = padAt(pad.r, pad.c);
+      if (p0) { p0.style.removeProperty("--hue"); p0.dataset.lit = "0"; }
+    }
+    paintPads();
+
+    if (!pad || dur < 200 || !blob.size) {
+      recNote("너무 짧습니다 — 누르고 있어야 녹음됩니다", "warn");
+      setTimeout(function () { if (armed) recNote("녹음 대기 — 패드를 누르고 있으세요", "warn"); }, 1600);
+      return;
+    }
+    try {
+      if (mode !== "pack" || !pack) makeBlankPack();
+      var buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+      recSeq++;
+      var path = "user/rec" + recSeq + "-" + Math.round(dur) + ".webm";
+      decoded.set(path, buf);
+      userBlobs.set(path, blob);
+      var y = flipY ? (pack.y - pad.r) : (pad.r + 1);
+      pack.map.set(chain + ":" + (pad.c + 1) + ":" + y,
+                   { i: 0, items: [{ path: path, loop: 1, worm: 0, label: "REC" + recSeq }] });
+      paintPads();
+      recNote("녹음 " + (dur / 1000).toFixed(1) + "초 → " + (pad.c + 1) + "," + y + " 칸", "ok");
+      scheduleAutosave();
+      setTimeout(function () { if (armed) recNote("녹음 대기 — 패드를 누르고 있으세요", "warn"); }, 1800);
+    } catch (e) {
+      recNote("녹음 해석 실패", "bad");
+    }
+  }
+
+  recBtn.addEventListener("click", function () {
+    if (placeArmed) disarmPlace();
+    armed ? disarmRec() : armRec();
+  });
+
+  /* ── 내 음악 넣기 ──
+     태블릿에서는 파일을 끌어다 놓을 수가 없다.
+     그래서 "음악" 을 누르고 → 넣을 칸을 누르면 → 파일 선택창이 뜬다.
+     녹음(●)과 똑같은 순서라 한 번 익히면 둘 다 쓴다. */
+  var placeArmed = false, placeTarget = null;
+  var addBtn = $("addmusic");
+
+  function armPlace() {
+    if (armed) disarmRec();
+    placeArmed = true;
+    addBtn.dataset.on = "1";
+    grid.classList.add("place");
+    recNote("음악을 넣을 칸을 누르세요", "ok");
+  }
+  function disarmPlace() {
+    placeArmed = false;
+    addBtn.dataset.on = "0";
+    grid.classList.remove("place");
+    recNoteClear();
+  }
+  addBtn.addEventListener("click", function () {
+    if (eraseOn) toggleErase();
+    placeArmed ? disarmPlace() : armPlace();
+  });
+
+  /* ── 나만의 패드 ──
+     빈 판을 하나 깔아주고, 넣고 지우는 것만 할 수 있게 한다. */
+  var eraseOn = false;
+  var newName = document.getElementById("newname");
+  var eraseBtn = document.getElementById("erase");
+
+  function blankBoard(name) {
+    pack = {
+      title: name, producer: "나", x: 8, y: 8, chains: 4,
+      map: new Map(), auto: null, zip: null, byPath: new Map(),
+      sounds: 0, skipped: 0
+    };
+    decoded = new Map();
+    userBlobs = new Map();
+    packZipBlob = null;
+    chain = 1;
+    logLines = [];
+  }
+
+  document.getElementById("newboard").addEventListener("click", function () {
+    if (!initAudio()) return;
+    wake();
+    var nm = (newName.value || "").trim() || "내 패드";
+    stopAll(); autoStop(); stopSeq();
+    if (eraseOn) toggleErase();
+    if (placeArmed) disarmPlace();
+    if (armed) disarmRec();
+    blankBoard(nm);
+    flipY = false;
+    document.getElementById("flipy").checked = false;
+    setMode("pack");
+    showMeta();
+    newName.value = "";
+    closeSheet();
+    recNote("\u201c" + nm + "\u201d 만들었어요 — 음악을 넣어보세요", "ok");
+    setTimeout(function () {
+      if (!armed && !placeArmed && !eraseOn) recNoteClear();
+    }, 3000);
+    scheduleAutosave();
+  });
+
+  function toggleErase() {
+    eraseOn = !eraseOn;
+    eraseBtn.dataset.on = eraseOn ? "1" : "0";
+    grid.classList.toggle("erase", eraseOn);
+    if (eraseOn) {
+      if (placeArmed) disarmPlace();
+      if (armed) disarmRec();
+      recNote("지울 칸을 누르세요", "warn");
+    } else recNoteClear();
+  }
+  eraseBtn.addEventListener("click", function () {
+    if (mode !== "pack" || !pack) {
+      recNote("먼저 나만의 패드를 만들어 주세요", "warn");
+      setTimeout(recNoteClear, 2400);
+      return;
+    }
+    toggleErase();
+  });
+
+  function eraseCell(r, c) {
+    if (mode !== "pack" || !pack) return;
+    var y = flipY ? (pack.y - r) : (r + 1);
+    var key = chain + ":" + (c + 1) + ":" + y;
+    if (!pack.map.has(key)) {
+      recNote("이미 빈 칸이에요", "warn");
+      return;
+    }
+    stopVoiceAt(key, ctx ? ctx.currentTime : 0);
+    pack.map.delete(key);
+    paintPads();
+    recNote("칸을 비웠어요", "warn");
+    scheduleAutosave();
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     11. 보드 저장 — IndexedDB
+     유니팩은 통째로 디코딩해두면 수백 MB 가 된다. 그래서
+     '원본 zip 파일 하나'만 넣어두고 열 때 다시 푼다.
+     내가 끌어다 넣은 음원만 파일 그대로 따로 담는다.
+     ═══════════════════════════════════════════════════════ */
+  var DB = null, storeOK = true;
+  var boardsEl = $("boards"), savenote = $("savenote"), boardName = $("boardname");
+
+  function idb() {
+    return new Promise(function (res, rej) {
+      if (DB) return res(DB);
+      if (!window.indexedDB) return rej(new Error("이 환경에서는 저장을 쓸 수 없습니다"));
+      var rq = indexedDB.open("grid64", 1);
+      rq.onupgradeneeded = function () {
+        var d = rq.result;
+        if (!d.objectStoreNames.contains("boards")) d.createObjectStore("boards", { keyPath: "id" });
+      };
+      rq.onsuccess = function () { DB = rq.result; res(DB); };
+      rq.onerror = function () { rej(rq.error || new Error("열기 실패")); };
+    });
+  }
+  function tx(mode, fn) {
+    return idb().then(function (d) {
+      return new Promise(function (res, rej) {
+        var t = d.transaction("boards", mode), st = t.objectStore("boards"), out;
+        out = fn(st);
+        t.oncomplete = function () { res(out && out.result !== undefined ? out.result : out); };
+        t.onerror = function () { rej(t.error); };
+        t.onabort = function () { rej(t.error || new Error("중단됨")); };
+      });
+    });
+  }
+  var idbPut = function (v) { return tx("readwrite", function (st) { return st.put(v); }); };
+  var idbDel = function (k) { return tx("readwrite", function (st) { return st.delete(k); }); };
+  var idbGet = function (k) { return tx("readonly", function (st) { return st.get(k); }); };
+  var idbAll = function ()  { return tx("readonly", function (st) { return st.getAll(); }); };
+
+  function stamp(ms) {
+    var d = new Date(ms);
+    var p = function (x) { return (x < 10 ? "0" : "") + x; };
+    return (d.getMonth() + 1) + "/" + d.getDate() + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function snapshot(id, name) {
+    if (!pack) return null;
+    var map = [];
+    pack.map.forEach(function (slot, key) {
+      map.push([key, slot.items.map(function (it) {
+        return { path: it.path, loop: it.loop, worm: it.worm, label: it.label };
+      })]);
+    });
+    var user = [];
+    userBlobs.forEach(function (b, p) { user.push([p, b]); });
+    return {
+      id: id, name: name || pack.title, savedAt: Date.now(),
+      zip: packZipBlob,
+      meta: { title: pack.title, producer: pack.producer, x: pack.x, y: pack.y,
+              chains: pack.chains, flipY: flipY },
+      auto: pack.auto, map: map, user: user
+    };
+  }
+
+  async function restore(rec) {
+    if (!initAudio()) return;
+    stopAll(); autoStop();
+    decoded = new Map(); userBlobs = new Map();
+    var byPath = new Map(), z = null;
+    if (rec.zip) {
+      z = readZip(await rec.zip.arrayBuffer());
+      var root = stripRoot(z.files);
+      z.files.forEach(function (f) {
+        byPath.set(norm(f.name.replace(/\\/g, "/").slice(root.length)), f);
+      });
+    }
+    var map = new Map();
+    rec.map.forEach(function (e) { map.set(e[0], { i: 0, items: e[1] }); });
+    rec.user.forEach(function (e) { userBlobs.set(e[0], e[1]); });
+    packZipBlob = rec.zip || null;
+    pack = {
+      title: rec.meta.title, producer: rec.meta.producer,
+      x: rec.meta.x, y: rec.meta.y, chains: rec.meta.chains,
+      map: map, auto: rec.auto || null, zip: z, byPath: byPath,
+      sounds: map.size, skipped: 0
+    };
+    flipY = !!rec.meta.flipY;
+    $("flipy").checked = flipY;
+    chain = 1;
+    logLines = [];
+    setMode("pack"); showMeta();
+    predecode();
+    packnote.textContent = "\u201c" + rec.name + "\u201d 불러옴";
+    packnote.dataset.tone = "ok";
+  }
+
+  var autoTimer = null;
+  function scheduleAutosave() {
+    if (!pack || !storeOK) return;
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(function () {
+      var snap = snapshot("__auto", pack.title);
+      if (!snap) return;
+      idbPut(snap).then(function () {
+        savenote.textContent = "자동 저장됨 · " + stamp(snap.savedAt);
+        savenote.dataset.tone = "ok";
+        listBoards();
+      }, function (e) {
+        savenote.textContent = "자동 저장 실패: " + (e && e.message ? e.message : e);
+        savenote.dataset.tone = "bad";
+      });
+    }, 900);
+  }
+
+  function listBoards() {
+    if (!storeOK) return;
+    idbAll().then(function (rows) {
+      rows = (rows || []).sort(function (a, b) { return b.savedAt - a.savedAt; });
+      boardsEl.innerHTML = "";
+      rows.forEach(function (r) {
+        var li = document.createElement("li");
+        if (r.id === "__auto") li.dataset.auto = "1";
+        var nm = document.createElement("span");
+        nm.className = "bn";
+        nm.textContent = (r.id === "__auto" ? "자동 저장 · " : "") + r.name;
+        var tm = document.createElement("span");
+        tm.className = "bt"; tm.textContent = stamp(r.savedAt);
+        var open = document.createElement("button");
+        open.type = "button"; open.className = "ico mini"; open.textContent = "열기";
+        open.addEventListener("click", function () {
+          restore(r).catch(function (e) {
+            packnote.textContent = "불러오기 실패: " + (e && e.message ? e.message : e);
+            packnote.dataset.tone = "bad";
+          });
+        });
+        var del = document.createElement("button");
+        del.type = "button"; del.className = "ico mini danger"; del.textContent = "삭제";
+        del.addEventListener("click", function () {
+          idbDel(r.id).then(listBoards);
+        });
+        li.appendChild(nm); li.appendChild(tm); li.appendChild(open); li.appendChild(del);
+        boardsEl.appendChild(li);
+      });
+      if (!rows.length) boardsEl.innerHTML = "";
+    }, function () {});
+  }
+
+  $("saveboard").addEventListener("click", function () {
+    if (!pack) {
+      savenote.textContent = "저장할 보드가 없습니다 — 먼저 음원을 넣거나 유니팩을 여세요";
+      savenote.dataset.tone = "warn"; return;
+    }
+    var nm = (boardName.value || "").trim() || pack.title;
+    var snap = snapshot("b" + Date.now(), nm);
+    idbPut(snap).then(function () {
+      boardName.value = "";
+      savenote.textContent = "\u201c" + nm + "\u201d 저장됨";
+      savenote.dataset.tone = "ok";
+      listBoards();
+    }, function (e) {
+      savenote.textContent = "저장 실패: " + (e && e.message ? e.message : e);
+      savenote.dataset.tone = "bad";
+    });
+  });
+
+  /* 저장을 못 쓰는 환경이면 조용히 알리고 나머지는 그대로 동작시킨다 */
+  idb().then(function () {
+    listBoards();
+    return idbGet("__auto");
+  }).then(function (rec) {
+    if (rec) {
+      savenote.textContent = "이전 작업이 남아 있습니다 — 목록에서 열기";
+      savenote.dataset.tone = "warn";
+    }
+  }, function (e) {
+    storeOK = false;
+    savenote.textContent = "저장 불가: " + (e && e.message ? e.message : e);
+    savenote.dataset.tone = "bad";
+  });
+
+  /* ═══════════════════════════════════════════════════════
+     12. Web MIDI — 실물 런치패드
+     프로그래머 모드에서 그리드는 노트 11~88. 위 줄이 81~88.
+     ═══════════════════════════════════════════════════════ */
+  var midiOut = null;
+  var PALETTE_SYNTH = [9, 53, 33, 49, 3, 17, 13, 13];
+
+  function hueIndex(r) {
+    if (mode === "synth") return PALETTE_SYNTH[r] || 3;
+    return 33;  // 팩 모드는 전부 시안 계열
+  }
+  function noteFor(r, c) { return (8 - r) * 10 + (c + 1); }
+  function midiLight(r, c, lit) {
+    if (!midiOut || r > 7 || c > 7) return;
+    var base = hueIndex(r);
+    var v = lit === "1" ? base : (lit === "2" ? base + 2 : 0);
+    try { midiOut.send([0x90, noteFor(r, c), v]); } catch (e) {}
+  }
+  function paintAll() {
+    if (!midiOut) return;
+    for (var r = 0; r < Math.min(8, ROWS_N); r++) {
+      for (var c = 0; c < Math.min(8, COLS); c++) {
+        var p = padAt(r, c);
+        var lit = p ? p.dataset.lit : "0";
+        var empty = p && p.dataset.empty === "1";
+        var base = hueIndex(r);
+        var v = lit === "1" ? base : (empty ? 0 : base + 3);
+        try { midiOut.send([0x90, noteFor(r, c), v]); } catch (e) {}
+      }
+    }
+  }
+
+  document.getElementById("midi").addEventListener("click", function () {
+    if (!navigator.requestMIDIAccess) {
+      midis.textContent = "Web MIDI 미지원 (Chrome·Edge 필요)";
+      midis.dataset.tone = "warn"; return;
+    }
+    midis.textContent = "연결 중…"; midis.dataset.tone = "";
+    navigator.requestMIDIAccess({ sysex: true }).then(function (acc) {
+      var inp = null;
+      acc.inputs.forEach(function (p) { if (/launchpad/i.test(p.name) && !inp) inp = p; });
+      acc.outputs.forEach(function (p) { if (/launchpad/i.test(p.name) && !midiOut) midiOut = p; });
+      if (!inp && !midiOut) {
+        midis.textContent = "런치패드를 못 찾았습니다";
+        midis.dataset.tone = "warn"; return;
+      }
+      if (midiOut) {
+        [0x0D, 0x0C, 0x0E].forEach(function (id) {
+          try { midiOut.send([0xF0, 0x00, 0x20, 0x29, 0x02, id, 0x0E, 0x01, 0xF7]); } catch (e) {}
+        });
+      }
+      if (inp) {
+        inp.onmidimessage = function (msg) {
+          var d = msg.data, status = d[0] & 0xF0;
+          if (status !== 0x90 && status !== 0x80) return;
+          var note = d[1], r = 8 - Math.floor(note / 10), c = (note % 10) - 1;
+          if (r < 0 || r >= ROWS_N || c < 0 || c >= COLS) return;
+          if (status === 0x90 && d[2] > 0) press(r, c); else release(r, c);
+        };
+      }
+      setTimeout(paintAll, 150);
+      midis.textContent = "연결됨 · " + ((inp && inp.name) || (midiOut && midiOut.name));
+      midis.dataset.tone = "ok";
+    }).catch(function () {
+      midis.textContent = "연결 거부됨 — 브라우저 권한 확인";
+      midis.dataset.tone = "bad";
+    });
+  });
+
+  /* 모바일에서 확대·스크롤이 끼어들지 않게 (호스트가 이미 정했으면 건드리지 않는다) */
+  if (!document.querySelector("meta[name=viewport]")) {
+    var mv = document.createElement("meta");
+    mv.name = "viewport";
+    mv.content = "width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no";
+    document.head.appendChild(mv);
+  }
+
+  buildStrip();
+  buildGrid();
+  updatePlay();
+})();
+</script>
