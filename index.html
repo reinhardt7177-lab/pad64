@@ -560,6 +560,7 @@
     </div>
     <div class="row">
       <button class="ico era" id="erase" type="button" data-on="0">칸 지우기</button>
+      <button class="ico" id="undo" type="button" disabled>되돌리기</button>
       <button class="ico" id="tosynth" type="button" disabled>원래 소리로</button>
     </div>
     <p class="note">칸 지우기를 켜고 칸을 누르면 그 칸이 비워집니다. 원래 소리로 돌아가도 만든 패드는 저장돼 있어요.</p>
@@ -581,6 +582,7 @@
       <label class="ctl">빠르기 <input id="bpm" type="range" min="70" max="170" step="1" value="102" /><span class="val" id="bpmv">102</span></label>
     </div>
     <div class="row">
+      <label class="ctl" style="flex:0 0 auto"><input id="quant" type="checkbox" checked /> 박자 맞추기</label>
       <label class="ctl" style="flex:0 0 auto"><input id="glide" type="checkbox" checked /> 손가락 훑기</label>
       <label class="ctl" style="flex:0 0 auto"><input id="pump" type="checkbox" checked /> 사이드체인 펌핑</label>
       <label class="ctl" style="flex:0 0 auto"><input id="sweepon" type="checkbox" checked /> 필터 스윕</label>
@@ -592,6 +594,7 @@
     <h2>유니팩</h2>
     <div class="row">
       <button class="ico" id="openpack2" type="button">유니팩 열기</button>
+      <button class="ico" id="exportpack" type="button">내보내기</button>
     </div>
     <p class="note" id="packnote">.zip 유니팩을 화면에 끌어다 놓아도 됩니다</p>
     <p class="note" id="decnote"></p>
@@ -776,6 +779,20 @@
      ═══════════════════════════════════════════════════════ */
   var ctx = null, master, wet, verb, noiseBuf, duck, punch, outGain;
   var pumpAmt = 0, pumpOn = true, sweepOn = true;
+  var quantOn = true, gridAnchor = 0;
+
+  /* 손으로 친 소리를 16분음표 격자에 떨어뜨린다.
+     즉시 나는 것보다 최대 한 칸(102BPM 에서 0.15초) 늦지만,
+     그 대가로 아무렇게나 쳐도 박자가 맞는다. */
+  function qTime() {
+    if (!ctx) return 0;
+    var now = ctx.currentTime;
+    if (!quantOn) return now;
+    var step = 60 / bpm / 4;
+    if (!gridAnchor) gridAnchor = now;
+    var k = Math.ceil((now - gridAnchor) / step - 0.001);
+    return gridAnchor + k * step;
+  }
 
   function initAudio() {
     if (ctx) return true;
@@ -1084,6 +1101,153 @@
     return new Uint8Array(ab);
   }
 
+  /* ── ZIP 쓰기 ──
+     읽기와 정확히 반대. 로컬 헤더 + 중앙 디렉터리 + 꼬리표.
+     텍스트는 압축하고 소리는 그대로 담는다(이미 큰 데이터라 이득이 적다). */
+  var CRCT = (function () {
+    var t = new Uint32Array(256);
+    for (var i = 0; i < 256; i++) {
+      var c = i;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(u8) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < u8.length; i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  async function deflateRaw(u8) {
+    if (typeof CompressionStream === "undefined") return null;
+    var ab = await new Response(
+      new Blob([u8]).stream().pipeThrough(new CompressionStream("deflate-raw"))
+    ).arrayBuffer();
+    return new Uint8Array(ab);
+  }
+  async function makeZip(entries) {
+    var enc = new TextEncoder(), parts = [], central = [], off = 0;
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      var nm = enc.encode(e.name), raw = e.data, crc = crc32(raw);
+      var body = raw, method = 0;
+      if (e.deflate) {
+        var z = await deflateRaw(raw);
+        if (z && z.length < raw.length) { body = z; method = 8; }
+      }
+      var lh = new ArrayBuffer(30), d = new DataView(lh);
+      d.setUint32(0, 0x04034b50, true); d.setUint16(4, 20, true);
+      d.setUint16(8, method, true); d.setUint32(14, crc, true);
+      d.setUint32(18, body.length, true); d.setUint32(22, raw.length, true);
+      d.setUint16(26, nm.length, true);
+      parts.push(new Uint8Array(lh), nm, body);
+      var ch = new ArrayBuffer(46), c2 = new DataView(ch);
+      c2.setUint32(0, 0x02014b50, true); c2.setUint16(4, 20, true); c2.setUint16(6, 20, true);
+      c2.setUint16(10, method, true); c2.setUint32(16, crc, true);
+      c2.setUint32(20, body.length, true); c2.setUint32(24, raw.length, true);
+      c2.setUint16(28, nm.length, true); c2.setUint32(42, off, true);
+      central.push(new Uint8Array(ch), nm);
+      off += 30 + nm.length + body.length;
+    }
+    var cdLen = 0;
+    central.forEach(function (p) { cdLen += p.length; });
+    var eo = new ArrayBuffer(22), e2 = new DataView(eo);
+    e2.setUint32(0, 0x06054b50, true);
+    e2.setUint16(8, entries.length, true); e2.setUint16(10, entries.length, true);
+    e2.setUint32(12, cdLen, true); e2.setUint32(16, off, true);
+    return new Blob(parts.concat(central, [new Uint8Array(eo)]), { type: "application/zip" });
+  }
+
+  /* 유니팩 명세는 소리를 .wav 로 요구한다.
+     녹음은 webm 이라 그대로 넣으면 유니패드가 못 읽는다.
+     그래서 디코딩된 파형을 16비트 wav 로 다시 굽는다. */
+  function wavFromBuffer(buf) {
+    var ch = Math.min(2, buf.numberOfChannels), len = buf.length, sr = buf.sampleRate;
+    var total = 44 + len * ch * 2;
+    var ab = new ArrayBuffer(total), d = new DataView(ab);
+    var w = function (o, str) { for (var i = 0; i < str.length; i++) d.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, "RIFF"); d.setUint32(4, total - 8, true); w(8, "WAVEfmt ");
+    d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, ch, true);
+    d.setUint32(24, sr, true); d.setUint32(28, sr * ch * 2, true);
+    d.setUint16(32, ch * 2, true); d.setUint16(34, 16, true);
+    w(36, "data"); d.setUint32(40, len * ch * 2, true);
+    var chans = [];
+    for (var c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+    var o = 44;
+    for (var i = 0; i < len; i++) {
+      for (var c3 = 0; c3 < ch; c3++) {
+        var v = chans[c3][i];
+        if (v > 1) v = 1; else if (v < -1) v = -1;
+        d.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7FFF, true);
+        o += 2;
+      }
+    }
+    return new Uint8Array(ab);
+  }
+
+  function saveBlob(blob, name) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+  }
+
+  async function exportPack() {
+    if (!pack || !pack.map.size) {
+      recNote("내보낼 게 없어요 — 먼저 소리를 넣어 주세요", "warn");
+      setTimeout(recNoteClear, 2600); return;
+    }
+    recNote("내보내는 중…", "ok");
+    try {
+      var enc = new TextEncoder(), files = [], lines = [], used = {}, nameFor = {};
+      var keys = [];
+      pack.map.forEach(function (slot, key) { keys.push([key, slot]); });
+      keys.sort(function (a, b) { return a[0].localeCompare(b[0]); });
+
+      for (var i = 0; i < keys.length; i++) {
+        var parts = keys[i][0].split(":"), slot = keys[i][1];
+        for (var j = 0; j < slot.items.length; j++) {
+          var it = slot.items[j];
+          if (!nameFor[it.path]) {
+            var buf = decoded.get(it.path);
+            if (!buf) buf = await decodeOne(it.path);
+            if (!buf) continue;
+            var base = String(it.label || "소리").split("/").pop()
+                        .replace(/\.[^.]+$/, "").replace(/[^\w가-힣 .-]/g, "_").slice(0, 24) || "소리";
+            var nm = base + ".wav", k = 2;
+            while (used[nm.toLowerCase()]) { nm = base + "-" + k + ".wav"; k++; }
+            used[nm.toLowerCase()] = 1;
+            nameFor[it.path] = nm;
+            files.push({ name: "sounds/" + nm, data: wavFromBuffer(buf), deflate: false });
+          }
+          if (!nameFor[it.path]) continue;
+          var line = parts[0] + " " + parts[1] + " " + parts[2] + " " + nameFor[it.path];
+          if (it.worm) line += " " + it.loop + " " + it.worm;
+          else if (it.loop !== 1) line += " " + it.loop;
+          lines.push(line);
+        }
+      }
+      if (!files.length) throw new Error("소리를 준비하지 못했어요");
+
+      var info = "title=" + pack.title + "\nproducerName=" + (pack.producer || "나") +
+                 "\nbuttonX=" + pack.x + "\nbuttonY=" + pack.y +
+                 "\nchain=" + pack.chains + "\nsquareButton=true\n";
+      files.unshift({ name: "keySound", data: enc.encode(lines.join("\n") + "\n"), deflate: true });
+      files.unshift({ name: "info", data: enc.encode(info), deflate: true });
+
+      var blob = await makeZip(files);
+      var fn = String(pack.title).replace(/[^\w가-힣 .-]/g, "_").trim() || "내패드";
+      saveBlob(blob, fn + ".zip");
+      recNote("내보냈어요 · " + files.length + "개 · " + Math.round(blob.size / 1024) + "KB", "ok");
+      setTimeout(function () { if (!armed && !placeArmed && !eraseOn) recNoteClear(); }, 3400);
+    } catch (err) {
+      recNote("내보내기 실패: " + (err && err.message ? err.message : err), "bad");
+      setTimeout(recNoteClear, 3400);
+    }
+  }
+
   /* ═══════════════════════════════════════════════════════
      4. UniPack
      info        : key=value
@@ -1199,9 +1363,43 @@
       }
 
       packZipBlob = file;
+      /* ── keyLED 라이트쇼 ──
+         파일 이름이 "체인 x y [반복]" 이고 안에 on/off/delay/chain 이 들어 있다. */
+      var leds = new Map();
+      var ledNames = [];
+      byPath.forEach(function (f, p) { if (p.indexOf("keyled/") === 0) ledNames.push(p); });
+      for (var li = 0; li < ledNames.length && li < 400; li++) {
+        try {
+          var head = ledNames[li].slice(7).trim().split(/\s+/);
+          if (head.length < 3) continue;
+          var lc = parseInt(head[0], 10), lx = parseInt(head[1], 10), ly = parseInt(head[2], 10);
+          var lrep = head.length > 3 ? parseInt(head[3], 10) : 1;
+          if (!(lc >= 1 && lx >= 1 && ly >= 1)) continue;
+          var body = td.decode(await zipRead(z, byPath.get(ledNames[li])));
+          var at = 0, ev = [];
+          body.split(/\r?\n/).forEach(function (ln) {
+            var t = ln.trim();
+            if (!t) return;
+            var a = t.split(/\s+/), cmd = a[0].toLowerCase();
+            if (cmd === "delay" || cmd === "d") at += parseInt(a[1], 10) || 0;
+            else if (cmd === "chain" || cmd === "c") ev.push({ at: at, k: "c", n: parseInt(a[1], 10) || 1 });
+            else if (cmd === "on" || cmd === "o") {
+              if (a[1] === "*" || a[1] === "mc") return;      // 둥근 사이드 버튼 — 우리에겐 없다
+              var col = (a[3] || "").toLowerCase() === "auto"
+                ? "#2BD4EE" : "#" + String(a[3] || "FFFFFF").replace(/[^0-9a-fA-F]/g, "").slice(0, 6);
+              ev.push({ at: at, k: "on", x: +a[1], y: +a[2], color: col });
+            } else if (cmd === "off" || cmd === "f") {
+              if (a[1] === "*" || a[1] === "mc") return;
+              ev.push({ at: at, k: "off", x: +a[1], y: +a[2] });
+            }
+          });
+          if (ev.length) leds.set(lc + ":" + lx + ":" + ly, { loop: lrep, ev: ev });
+        } catch (e) {}
+      }
+
       pack = {
         title: meta.title || file.name, producer: meta.producername || "?",
-        x: bx, y: by, chains: ch, map: map, auto: auto,
+        x: bx, y: by, chains: ch, map: map, auto: auto, leds: leds,
         zip: z, byPath: byPath, sounds: used, skipped: skipped
       };
       decoded = new Map(); stopAll();
@@ -1306,13 +1504,66 @@
     if (it.worm) src.onended = function () { setChain(it.worm); };
     return true;
   }
-  function packPress(x, y) { return packTrigger(chain, x, y, ctx.currentTime); }
+  function packPress(x, y) { return packTrigger(chain, x, y, qTime()); }
   function packReleaseAt(c, x, y, when) {
     var key = c + ":" + x + ":" + y;
     var v = voices.get(key);
     if (v && v.inf) stopVoiceAt(key, when);   // 무한 루프만 손을 떼면 멈춘다
   }
   function packRelease(x, y) { packReleaseAt(chain, x, y, ctx.currentTime); }
+
+  /* ── 라이트쇼 재생 ──
+     소리와 달리 화면이라 오디오 시계를 못 쓴다. 타이머로 돌린다. */
+  var ledRuns = 0, ledTimers = new Map();
+
+  function paintOne(p) {
+    var r = +p.dataset.r, c = +p.dataset.c;
+    var hueVar = mode === "synth" ? SYNTH_ROWS[r].hue
+               : (p.dataset.empty === "1" ? "--f-empty" : "--f-pack");
+    p.style.setProperty("--hue", "var(" + hueVar + ")");
+    p.dataset.lit = "0";
+  }
+  function stopLightshow(key) {
+    var t = ledTimers.get(key);
+    if (!t) return;
+    t.forEach(clearTimeout);
+    ledTimers.delete(key);
+    ledRuns = Math.max(0, ledRuns - 1);
+  }
+  function stopAllLights() {
+    ledTimers.forEach(function (t) { t.forEach(clearTimeout); });
+    ledTimers.clear();
+    ledRuns = 0;
+    if (mode === "pack") paintPads();
+  }
+  function applyLed(e) {
+    if (e.k === "c") { setChain(e.n); return; }
+    var p = xyToPad(e.x, e.y);
+    if (!p) return;
+    if (e.k === "on") { p.style.setProperty("--hue", e.color); p.dataset.lit = "1"; }
+    else paintOne(p);
+  }
+  function runLightshow(c, x, y) {
+    if (!pack || !pack.leds || !pack.leds.size) return;
+    var key = c + ":" + x + ":" + y;
+    var ls = pack.leds.get(key);
+    if (!ls) return;
+    stopLightshow(key);
+    var span = ls.ev[ls.ev.length - 1].at + 40;
+    var reps = ls.loop === 0 ? 4 : Math.min(Math.max(ls.loop, 1), 8);  // 무한은 4회로 자른다
+    var timers = [];
+    for (var r = 0; r < reps; r++) {
+      (function (base) {
+        ls.ev.forEach(function (e) {
+          timers.push(setTimeout(function () { applyLed(e); }, base + e.at));
+        });
+      })(r * span);
+    }
+    timers.push(setTimeout(function () { stopLightshow(key); paintPads(); }, reps * span + 80));
+    ledTimers.set(key, timers);
+    ledRuns++;
+    ensureFrame();
+  }
 
   /* ── autoPlay 엔진 ──
      rAF 로 시간을 재면 탭이 가려지는 순간 곡이 멈춘다.
@@ -1328,6 +1579,7 @@
     apOn = true; apIdx = 0; apChain = 1;
     apT0 = ctx.currentTime + 0.15;
     updatePlay();
+    ensureFrame();
     apTimer = setInterval(apPump, 60);
     apPump();
   }
@@ -1349,7 +1601,9 @@
         scheduleUi(when, (function (n) { return function () { setChain(n); }; })(e.n));
       } else if (e.k === "on") {
         packTrigger(apChain, e.x, e.y, when);
-        scheduleUi(when, (function (x, y) { return function () { flash(x, y); }; })(e.x, e.y));
+        scheduleUi(when, (function (x, y, cc) {
+          return function () { flash(x, y); runLightshow(cc, x, y); };
+        })(e.x, e.y, apChain));
       } else {
         packReleaseAt(apChain, e.x, e.y, when);
       }
@@ -1567,10 +1821,11 @@
     if (mode === "pack") {
       var y = flipY ? (pack.y - r) : (r + 1);
       packPress(c + 1, y);
+      runLightshow(chain, c + 1, y);
       flashPad(padAt(r, c));
       return;
     }
-    var row = SYNTH_ROWS[r], now = ctx.currentTime + 0.001;
+    var row = SYNTH_ROWS[r], now = qTime() + 0.001;
     if (row.kind === "loop") {
       if (!playing) start();
       if (active[r] === c) {
@@ -1614,6 +1869,7 @@
   async function assignFiles(files, r, c) {
     if (!initAudio()) return;
     if (mode !== "pack" || !pack) makeBlankPack();
+    pushUndo();
     var i = 0;
     for (var k = 0; k < files.length; k++) {
       var f = files[k];
@@ -1730,7 +1986,9 @@
     wake();
     if (playing) return;
     playing = true; step = 0; absStep = 0; nextTime = ctx.currentTime + 0.08;
+    gridAnchor = nextTime;                 // 손으로 치는 소리도 같은 격자에 태운다
     timer = setInterval(tick, 25);
+    ensureFrame();
     updatePlay();
   }
   function stopSeq() {
@@ -1753,6 +2011,16 @@
         if (p && p.dataset.lit !== lit) { p.dataset.lit = lit; midiLight(r, c, lit); }
       }
     }
+  }
+
+  var frameOn = false;
+  function ensureFrame() {
+    if (frameOn) return;
+    frameOn = true;
+    requestAnimationFrame(frame);
+  }
+  function frameNeeded() {
+    return playing || apOn || armed || visQ.length > 0 || ledRuns > 0;
   }
 
   function frame() {
@@ -1780,9 +2048,13 @@
         }
       }
     }
+    if (!frameNeeded()) {          // 아무것도 안 움직이면 멈춘다
+      frameOn = false;
+      beatEls.forEach(function (b) { b.classList.remove("lit"); });
+      return;
+    }
     requestAnimationFrame(frame);
   }
-  requestAnimationFrame(frame);
 
   /* ═══════════════════════════════════════════════════════
      8. 모드 전환 · 시트
@@ -1905,7 +2177,8 @@
     [["제목", pack.title], ["제작", pack.producer],
      ["그리드", pack.x + " × " + pack.y], ["체인", String(pack.chains)],
      ["매핑", pack.sounds + "칸" + (pack.skipped ? " (" + pack.skipped + "줄 건너뜀)" : "")],
-     ["자동재생", pack.auto ? pack.auto.length + "개 이벤트" : "없음"]
+     ["자동재생", pack.auto ? pack.auto.length + "개 이벤트" : "없음"],
+     ["라이트쇼", (pack.leds && pack.leds.size) ? pack.leds.size + "칸" : "없음"]
     ].forEach(function (row) {
       var dt = document.createElement("dt"); dt.textContent = row[0];
       var dd = document.createElement("dd"); dd.textContent = row[1];
@@ -1955,7 +2228,7 @@
     updatePlay();
   });
   stopBtn.addEventListener("click", function () {
-    if (mode === "pack") { autoStop(); stopAll(); }
+    if (mode === "pack") { autoStop(); stopAll(); stopAllLights(); }
     else panicAll();
     updatePlay();
   });
@@ -1984,6 +2257,8 @@
     }
   });
   $("sweepon").addEventListener("change", function (e) { sweepOn = e.target.checked; });
+  $("quant").addEventListener("change", function (e) { quantOn = e.target.checked; });
+  $("exportpack").addEventListener("click", exportPack);
   $("flipy").addEventListener("change", function (e) {
     flipY = e.target.checked; paintPads(); scheduleAutosave();
   });
@@ -2065,8 +2340,7 @@
   window.addEventListener("orientationchange", function () { setTimeout(fitGrid, 120); });
   if (window.ResizeObserver) new ResizeObserver(fitGrid).observe(stage);
 
-  /* 재생 상태가 바뀌면 버튼 표시도 따라간다 */
-  setInterval(updatePlay, 250);
+  /* 250ms 마다 훑는 대신 상태가 바뀌는 자리에서만 갱신한다 */
 
   /* ═══════════════════════════════════════════════════════
      10. 마이크 녹음
@@ -2203,6 +2477,7 @@
     }
     try {
       if (mode !== "pack" || !pack) makeBlankPack();
+      pushUndo();
       var buf = await ctx.decodeAudioData(await blob.arrayBuffer());
       recSeq++;
       var path = "user/rec" + recSeq + "-" + Math.round(dur) + ".webm";
@@ -2250,6 +2525,40 @@
     placeArmed ? disarmPlace() : armPlace();
   });
 
+  /* ── 되돌리기 ──
+     칸을 바꾸기 직전의 배치를 쌓아둔다. 소리 자체는 그대로 두고
+     '어느 칸에 무엇이 있었나'만 기억하므로 가볍다. */
+  var undoStack = [];
+  var undoBtn = document.getElementById("undo");
+
+  function snapMap() {
+    var a = [];
+    pack.map.forEach(function (slot, key) {
+      a.push([key, slot.items.slice()]);
+    });
+    return a;
+  }
+  function pushUndo() {
+    if (!pack) return;
+    undoStack.push(snapMap());
+    if (undoStack.length > 20) undoStack.shift();
+    undoBtn.disabled = false;
+  }
+  function doUndo() {
+    if (!undoStack.length || !pack) return;
+    var a = undoStack.pop();
+    var m = new Map();
+    a.forEach(function (e) { m.set(e[0], { i: 0, items: e[1] }); });
+    pack.map = m;
+    stopAll();
+    paintPads();
+    undoBtn.disabled = !undoStack.length;
+    recNote("되돌렸어요", "ok");
+    setTimeout(function () { if (!armed && !placeArmed && !eraseOn) recNoteClear(); }, 1800);
+    scheduleAutosave();
+  }
+  undoBtn.addEventListener("click", doUndo);
+
   /* ── 나만의 패드 ──
      빈 판을 하나 깔아주고, 넣고 지우는 것만 할 수 있게 한다. */
   var eraseOn = false;
@@ -2278,6 +2587,7 @@
     if (placeArmed) disarmPlace();
     if (armed) disarmRec();
     blankBoard(nm);
+    undoStack = []; undoBtn.disabled = true;
     flipY = false;
     document.getElementById("flipy").checked = false;
     setMode("pack");
@@ -2318,6 +2628,7 @@
       recNote("이미 빈 칸이에요", "warn");
       return;
     }
+    pushUndo();
     stopVoiceAt(key, ctx ? ctx.currentTime : 0);
     pack.map.delete(key);
     paintPads();
