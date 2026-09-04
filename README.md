@@ -3,7 +3,9 @@
 브라우저에서 손가락으로 두드려 음악을 만드는 8×8 패드입니다.
 **파일 하나, 외부 라이브러리 0개, 빌드 없음.** 소리는 전부 브라우저가 실시간으로 합성합니다.
 
-👉 **[지금 바로 열기](https://reinhardt7177-lab.github.io/pad64/)**
+👉 **[지금 바로 열기](https://pad64.vercel.app)**
+
+거울 주소: [reinhardt7177-lab.github.io/pad64](https://reinhardt7177-lab.github.io/pad64/)
 
 태블릿·폰에서도 그대로 됩니다. 화면 방향에 맞춰 칸이 늘어납니다.
 
