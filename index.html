@@ -1194,6 +1194,23 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
   }
 
+  /* 파싱해 둔 이벤트를 다시 유니팩 문법으로 되돌린다.
+     이게 없으면 남의 팩을 열어 손보고 내보낼 때
+     불빛과 자동연주가 통째로 사라진다. */
+  function serEvents(ev, withColor) {
+    var out = [], last = 0;
+    for (var i = 0; i < ev.length; i++) {
+      var e = ev[i];
+      if (e.at > last) { out.push("delay " + Math.round(e.at - last)); last = e.at; }
+      if (e.k === "c") out.push("chain " + e.n);
+      else if (e.k === "on") {
+        out.push("on " + e.x + " " + e.y +
+          (withColor ? " " + String(e.color || "#FFFFFF").replace("#", "").toUpperCase() : ""));
+      } else out.push("off " + e.x + " " + e.y);
+    }
+    return out.join("\n") + "\n";
+  }
+
   async function exportPack() {
     if (!pack || !pack.map.size) {
       recNote("내보낼 게 없어요 — 먼저 소리를 넣어 주세요", "warn");
@@ -1234,6 +1251,17 @@
       var info = "title=" + pack.title + "\nproducerName=" + (pack.producer || "나") +
                  "\nbuttonX=" + pack.x + "\nbuttonY=" + pack.y +
                  "\nchain=" + pack.chains + "\nsquareButton=true\n";
+      if (pack.auto && pack.auto.length) {
+        files.push({ name: "autoPlay", data: enc.encode(serEvents(pack.auto, false)), deflate: true });
+      }
+      if (pack.leds && pack.leds.size) {
+        pack.leds.forEach(function (ls, key) {
+          var kp = key.split(":");
+          var fn2 = "keyLED/" + kp[0] + " " + kp[1] + " " + kp[2] +
+                    (ls.loop !== 1 ? " " + ls.loop : "");
+          files.push({ name: fn2, data: enc.encode(serEvents(ls.ev, true)), deflate: true });
+        });
+      }
       files.unshift({ name: "keySound", data: enc.encode(lines.join("\n") + "\n"), deflate: true });
       files.unshift({ name: "info", data: enc.encode(info), deflate: true });
 
