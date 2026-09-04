@@ -411,6 +411,34 @@
     .help, .legend li { font-size: 0.92rem; }
   }
 
+  /* ── 소리 자르기 ─────────────────────────────────── */
+  .edit {
+    position: fixed; inset: 0; z-index: 30;
+    background: #000000d9;
+    display: flex; align-items: center; justify-content: center;
+    padding: 1rem;
+  }
+  .edit[hidden] { display: none; }
+  .edit-box {
+    width: min(46rem, 100%);
+    background: var(--bezel);
+    border: 1px solid var(--bezel-edge);
+    border-radius: 16px;
+    padding: 0.9rem 1rem 1.1rem;
+    box-shadow: 0 40px 90px -40px #000;
+    display: flex; flex-direction: column; gap: 0.7rem;
+  }
+  .edit-top { display: flex; align-items: center; gap: 0.5rem; }
+  .edit-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .wave {
+    width: 100%; height: 9rem; display: block;
+    background: #07080C; border: 1px solid var(--rule); border-radius: 10px;
+    touch-action: none; cursor: crosshair;
+  }
+  .edit .ico[data-on="1"] { background: var(--focus); border-color: var(--focus); color: #04141A; font-weight: 700; }
+  .edit .hint { font-size: 0.82rem; color: var(--ink-dim); }
+  .edit .big { font-family: var(--mono); font-size: 1.05rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+
   /* ── 시트 ─────────────────────────────────────────── */
   .scrim {
     position: fixed; inset: 0; background: #000a; z-index: 19;
@@ -540,6 +568,28 @@
       </div>
     </div>
   </main>
+</div>
+
+<div class="edit" id="editor" hidden>
+  <div class="edit-box">
+    <div class="edit-top">
+      <span class="ttl grow" id="editname">소리 자르기</span>
+      <button class="ico" id="editclose" type="button" aria-label="닫기">✕</button>
+    </div>
+    <canvas class="wave" id="wave"></canvas>
+    <div class="edit-row">
+      <span class="big" id="editinfo">0.0초</span>
+      <span class="grow"></span>
+      <label class="ctl" style="flex:0 0 auto"><input id="snap" type="checkbox" checked /> 박자에 맞추기</label>
+    </div>
+    <p class="hint">파형을 <b>드래그</b>하면 구간이 잡힙니다. 양 끝 손잡이를 잡아 늘리거나 줄이세요.</p>
+    <div class="edit-row">
+      <button class="ico" id="editplay" type="button">▶ 들어보기</button>
+      <button class="ico" id="editall" type="button">전체 넣기</button>
+      <span class="grow"></span>
+      <button class="ico" id="editok" type="button" data-on="1">이 부분 넣기</button>
+    </div>
+  </div>
 </div>
 
 <div class="scrim" id="scrim"></div>
@@ -2689,6 +2739,7 @@
     if (!fs.length) return;
     var zipf = fs.filter(function (f) { return /\.zip$/i.test(f.name) || f.type === "application/zip"; });
     if (zipf.length) { loadPack(zipf[0]); closeSheet(); }
+    else if (fs.length === 1) { closeSheet(); openFileInEditor(fs[0], tgt || { r: 0, c: 0 }); }
     else assignFiles(fs, tgt ? tgt.r : 0, tgt ? tgt.c : 0);
   });
 
@@ -2701,7 +2752,9 @@
     var zipf = fs.filter(function (f) { return /\.zip$/i.test(f.name); });
     if (zipf.length) { loadPack(zipf[0]); return; }
     var p = padFromPoint(ev.clientX, ev.clientY);
-    assignFiles(fs, p ? +p.dataset.r : 0, p ? +p.dataset.c : 0);
+    var tg = { r: p ? +p.dataset.r : 0, c: p ? +p.dataset.c : 0 };
+    if (fs.length === 1) openFileInEditor(fs[0], tg);
+    else assignFiles(fs, tg.r, tg.c);
   }
   ["dragenter", "dragover"].forEach(function (e) {
     window.addEventListener(e, function (ev) { ev.preventDefault(); device.classList.add("drop"); });
@@ -2756,7 +2809,202 @@
   /* 250ms 마다 훑는 대신 상태가 바뀌는 자리에서만 갱신한다 */
 
   /* ═══════════════════════════════════════════════════════
-     10. 마이크 녹음
+     10. 소리 자르기
+     노래 한 곡을 통째로 칸에 넣으면 아무도 못 쓴다.
+     파형을 보여주고 원하는 구간만 잘라 넣게 한다.
+     ═══════════════════════════════════════════════════════ */
+  var edBuf = null, edName = "", edTarget = null;
+  var edA = 0, edB = 0, edSrc = null, edDrag = null;
+  var edEl = $("editor"), waveEl = $("wave");
+  var edInfo = $("editinfo"), edTitle = $("editname"), snapEl = $("snap");
+
+  function openEditor(buf, name, target) {
+    edBuf = buf; edName = name; edTarget = target || { r: 0, c: 0 };
+    edA = 0;
+    edB = Math.min(buf.duration, 4);          // 처음엔 앞 4초를 잡아둔다
+    edEl.hidden = false;
+    edTitle.textContent = name;
+    sizeWave();
+    drawWave();
+  }
+  function closeEditor() {
+    stopPreview();
+    edEl.hidden = true;
+    edBuf = null; edTarget = null;
+  }
+
+  function sizeWave() {
+    var dpr = window.devicePixelRatio || 1;
+    var w = waveEl.clientWidth || 600, h = waveEl.clientHeight || 144;
+    waveEl.width = Math.round(w * dpr);
+    waveEl.height = Math.round(h * dpr);
+  }
+
+  function drawWave() {
+    if (!edBuf) return;
+    var g = waveEl.getContext("2d");
+    var W = waveEl.width, H = waveEl.height, mid = H / 2;
+    g.clearRect(0, 0, W, H);
+
+    /* 파형 — 픽셀마다 최대·최소를 뽑아 세로선으로 */
+    var data = edBuf.getChannelData(0);
+    var per = data.length / W;
+    g.strokeStyle = "#4A5169";
+    g.beginPath();
+    for (var x = 0; x < W; x++) {
+      var s0 = Math.floor(x * per), s1 = Math.min(data.length, Math.floor((x + 1) * per));
+      var lo = 0, hi = 0;
+      for (var i = s0; i < s1; i += 2) {
+        var v = data[i];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      g.moveTo(x + 0.5, mid - hi * mid * 0.94);
+      g.lineTo(x + 0.5, mid - lo * mid * 0.94);
+    }
+    g.stroke();
+
+    /* 고른 구간 */
+    var xa = (edA / edBuf.duration) * W, xb = (edB / edBuf.duration) * W;
+    g.fillStyle = "#2BD4EE22";
+    g.fillRect(xa, 0, xb - xa, H);
+    g.strokeStyle = "#2BD4EE";
+    g.lineWidth = Math.max(2, W / 600);
+    g.beginPath();
+    g.moveTo(xa, 0); g.lineTo(xa, H);
+    g.moveTo(xb, 0); g.lineTo(xb, H);
+    g.stroke();
+    /* 손잡이 */
+    g.fillStyle = "#2BD4EE";
+    var hw = Math.max(6, W / 110);
+    g.fillRect(xa - hw / 2, 0, hw, H * 0.12);
+    g.fillRect(xa - hw / 2, H * 0.88, hw, H * 0.12);
+    g.fillRect(xb - hw / 2, 0, hw, H * 0.12);
+    g.fillRect(xb - hw / 2, H * 0.88, hw, H * 0.12);
+    g.lineWidth = 1;
+
+    edInfo.textContent = (edB - edA).toFixed(2) + "초  ·  " +
+      edA.toFixed(2) + " ~ " + edB.toFixed(2) + " / 전체 " + edBuf.duration.toFixed(1) + "초";
+  }
+
+  function snapT(t) {
+    if (!snapEl.checked) return t;
+    var beat = 60 / bpm;                       // 한 박
+    return Math.round(t / beat) * beat;
+  }
+  function xToT(clientX) {
+    var b = waveEl.getBoundingClientRect();
+    var f = (clientX - b.left) / b.width;
+    return Math.max(0, Math.min(edBuf.duration, f * edBuf.duration));
+  }
+
+  waveEl.addEventListener("pointerdown", function (ev) {
+    if (!edBuf) return;
+    ev.preventDefault();
+    try { waveEl.setPointerCapture(ev.pointerId); } catch (e) {}
+    var t = xToT(ev.clientX);
+    var da = Math.abs(t - edA), db = Math.abs(t - edB);
+    var near = edBuf.duration / 40;
+    if (da < near && da <= db) edDrag = "a";
+    else if (db < near) edDrag = "b";
+    else { edA = snapT(t); edB = edA; edDrag = "b"; }
+    drawWave();
+  });
+  window.addEventListener("pointermove", function (ev) {
+    if (!edDrag || !edBuf) return;
+    var t = snapT(xToT(ev.clientX));
+    if (edDrag === "a") edA = Math.min(t, edB);
+    else edB = Math.max(t, edA);
+    drawWave();
+  });
+  function edUp() { edDrag = null; }
+  window.addEventListener("pointerup", edUp);
+  window.addEventListener("pointercancel", edUp);
+
+  function stopPreview() {
+    if (edSrc) { try { edSrc.stop(); } catch (e) {} edSrc = null; }
+    $("editplay").dataset.on = "0";
+    $("editplay").textContent = "▶ 들어보기";
+  }
+  $("editplay").addEventListener("click", function () {
+    if (!edBuf || !initAudio()) return;
+    wake();
+    if (edSrc) { stopPreview(); return; }
+    var src = ctx.createBufferSource();
+    src.buffer = edBuf;
+    src.connect(master);
+    var dur = Math.max(0.05, edB - edA);
+    src.start(ctx.currentTime, edA, dur);
+    src.onended = stopPreview;
+    edSrc = src;
+    $("editplay").dataset.on = "1";
+    $("editplay").textContent = "■ 멈추기";
+  });
+
+  function trimBuffer(buf, a, b) {
+    var sr = buf.sampleRate;
+    var s0 = Math.max(0, Math.floor(a * sr));
+    var s1 = Math.min(buf.length, Math.floor(b * sr));
+    var len = Math.max(1, s1 - s0);
+    var out = ctx.createBuffer(buf.numberOfChannels, len, sr);
+    for (var c = 0; c < buf.numberOfChannels; c++) {
+      out.getChannelData(c).set(buf.getChannelData(c).subarray(s0, s0 + len));
+    }
+    return out;
+  }
+
+  function commitEdit(whole) {
+    if (!edBuf || !initAudio()) return;
+    var buf = whole ? edBuf : trimBuffer(edBuf, edA, edB);
+    if (buf.duration < 0.05) {
+      edInfo.textContent = "너무 짧아요 — 조금 더 넓게 잡아주세요";
+      return;
+    }
+    if (mode !== "pack" || !pack) makeBlankPack();
+    pushUndo();
+    var nm = String(edName).replace(/\.[^.]+$/, "").slice(0, 20) || "소리";
+    var path = "user/" + nm + "-" + Date.now() + ".wav";
+    decoded.set(path, buf);
+    userBlobs.set(path, new Blob([wavFromBuffer(buf)], { type: "audio/wav" }));
+    var r = edTarget.r, c = edTarget.c;
+    if (r >= pack.y) r = 0;
+    if (c >= pack.x) c = 0;
+    var y = flipY ? (pack.y - r) : (r + 1);
+    pack.map.set(chain + ":" + (c + 1) + ":" + y,
+                 { i: 0, items: [{ path: path, loop: 1, worm: 0, label: nm }] });
+    paintPads();
+    closeEditor();
+    recNote("넣었어요 · " + buf.duration.toFixed(1) + "초", "ok");
+    setTimeout(function () { if (!armed && !placeArmed && !eraseOn) recNoteClear(); }, 2400);
+    scheduleAutosave();
+  }
+  $("editok").addEventListener("click", function () { commitEdit(false); });
+  $("editall").addEventListener("click", function () { commitEdit(true); });
+  $("editclose").addEventListener("click", closeEditor);
+  snapEl.addEventListener("change", function () {
+    edA = snapT(edA); edB = snapT(edB); drawWave();
+  });
+  window.addEventListener("resize", function () {
+    if (!edEl.hidden) { sizeWave(); drawWave(); }
+  });
+
+  /* 파일 하나를 고르면 통째로 넣지 않고 편집기를 연다 */
+  async function openFileInEditor(file, target) {
+    if (!initAudio()) return;
+    wake();
+    try {
+      recNote("여는 중… " + file.name, "ok");
+      var buf = await ctx.decodeAudioData(await file.arrayBuffer());
+      recNoteClear();
+      openEditor(buf, file.name, target);
+    } catch (e) {
+      recNote("소리를 못 읽었어요", "bad");
+      setTimeout(recNoteClear, 2400);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     11. 마이크 녹음
      ● 로 대기 상태를 만든 뒤, 패드를 누르고 있는 동안 녹음한다.
      떼는 순간 디코딩해서 그 칸에 붙이고 저장까지 건다.
      ═══════════════════════════════════════════════════════ */
@@ -3050,7 +3298,7 @@
   }
 
   /* ═══════════════════════════════════════════════════════
-     11. 보드 저장 — IndexedDB
+     12. 보드 저장 — IndexedDB
      유니팩은 통째로 디코딩해두면 수백 MB 가 된다. 그래서
      '원본 zip 파일 하나'만 넣어두고 열 때 다시 푼다.
      내가 끌어다 넣은 음원만 파일 그대로 따로 담는다.
@@ -3229,7 +3477,7 @@
   });
 
   /* ═══════════════════════════════════════════════════════
-     12. Web MIDI — 실물 런치패드
+     13. Web MIDI — 실물 런치패드
      프로그래머 모드에서 그리드는 노트 11~88. 위 줄이 81~88.
      ═══════════════════════════════════════════════════════ */
   var midiOut = null;
