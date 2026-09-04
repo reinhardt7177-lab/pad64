@@ -653,6 +653,7 @@
     { root: 31, notes: [50, 55, 59], name: "솔"  }
   ];
   var MINOR = [0, 2, 3, 5, 7, 8, 10];
+  var NOTE_NAMES = ["라", "시", "도", "레", "미", "파", "솔"];
   function deg(n) { return 69 + 12 * Math.floor(n / 7) + MINOR[((n % 7) + 7) % 7]; }
   function hz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
@@ -752,32 +753,32 @@
   var DJ_DRUMS = [
     { name: "빅룸",   k: [0, 4, 8, 12], s: E, c: [4, 12], h: [2, 6, 10, 14], o: E },
     { name: "트랩",   k: [0, 7, 10], s: [8], c: E, h: [0,2,4,6,8,10,12,13,14,15], o: E },
+    { name: "브레이크", k: [0, 10], s: [4, 12], c: E, h: [2, 3, 6, 7, 10, 11, 14, 15], o: [8] },
     { name: "하프",   k: [0], s: [8], c: [8], h: [0, 4, 8, 12], o: E },
+    { name: "빌드",   k: [0, 4, 8], s: [10, 11, 12, 13, 14, 15], c: [0], h: E, o: E },
     { name: "질주",   k: [0, 4, 8, 12], s: E, c: [4, 12], h: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], o: E },
     { name: "위쪽만", k: E, s: E, c: [4, 12], h: [0, 2, 4, 6, 8, 10, 12, 14], o: [7, 15] },
-    { name: "드롭",   k: [0, 8], s: E, c: [12], h: [2, 6, 10, 14], o: E },
-    { name: "브레이크", k: [0, 10], s: [4, 12], c: E, h: [2, 3, 6, 7, 10, 11, 14, 15], o: [8] },
-    { name: "빌드",   k: [0, 4, 8], s: [10, 11, 12, 13, 14, 15], c: [0], h: E, o: E }
+    { name: "드롭",   k: [0, 8], s: E, c: [12], h: [2, 6, 10, 14], o: E }
   ];
   var DJ_BASS = [
     { name: "808",    n: [[0, 0, 7], [8, 0, 7]] },
-    { name: "미끄럼", n: [[0, 0, 5], [6, 5, 2], [8, 0, 5], [14, -2, 2]] },
     { name: "웝",     wob: true, n: [[0, 0, 8], [8, 0, 8]] },
+    { name: "미끄럼", n: [[0, 0, 5], [6, 5, 2], [8, 0, 5], [14, -2, 2]] },
+    { name: "옥타브", n: [[0, 0, 3], [4, 12, 3], [8, 0, 3], [12, 12, 3]] },
     { name: "리세",   wob: true, n: [[0, 0, 16]] },
     { name: "8분",    n: [[0,0,2],[2,0,2],[4,0,2],[6,0,2],[8,0,2],[10,0,2],[12,0,2],[14,0,2]] },
-    { name: "옥타브", n: [[0, 0, 3], [4, 12, 3], [8, 0, 3], [12, 12, 3]] },
     { name: "엇박",   n: [[2, 0, 3], [6, 0, 3], [10, 0, 3], [14, 0, 2]] },
     { name: "길게",   n: [[0, 0, 16]] }
   ];
   var DJ_CHORDS = [
     { name: "슈퍼소", mode: "hold", hits: [0] },
     { name: "펌프",   mode: "stab", hits: [0, 4, 8, 12] },
-    { name: "엇박",   mode: "stab", hits: [2, 6, 10, 14] },
     { name: "썰기",   mode: "stab", hits: [0, 2, 4, 6, 8, 10, 12, 14] },
-    { name: "촘촘",   mode: "stab", hits: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15] },
     { name: "오름",   mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: 1 },
-    { name: "내림",   mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: -1 },
-    { name: "부풀림", mode: "hold", hits: [0], swell: true }
+    { name: "부풀림", mode: "hold", hits: [0], swell: true },
+    { name: "엇박",   mode: "stab", hits: [2, 6, 10, 14] },
+    { name: "촘촘",   mode: "stab", hits: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15] },
+    { name: "내림",   mode: "arp", hits: [0, 2, 4, 6, 8, 10, 12, 14], dir: -1 }
   ];
   var DJ_LEAD = [
     { name: "보컬칩", n: [[0,4,2],[2,4,1],[3,6,1],[4,4,2],[8,2,2],[10,4,2],[12,0,4]] },
@@ -797,16 +798,62 @@
   ];
   var DJ_FXN = ["에어혼", "스크래치", "올라감", "쾅", "떨어짐", "휙", "사이렌", "저음"];
 
+  /* 디제이는 5x5 25칸. 네 줄로 곡을 쌓고 마지막 줄로 효과음을 던진다.
+     8x8 보다 칸이 훨씬 커져서 손가락으로 치기 좋다. */
+  /* ── 모드 ──
+     진짜 DJ 장비는 패드를 늘리지 않는다. 오른쪽 기둥으로 의미를 갈아끼운다.
+     20칸 x 4모드 = 80가지를 25개 버튼으로 낸다. */
+  var DJ_MODES = ["루프", "롤", "샘플", "음", "정지"];
+  var djMode = 0;
+  var ROLL_STEPS = [1, 2, 4, 8];              // 16분 단위: 1/4박 1/2박 1박 2박
+  var ROLL_NAMES = ["1/4박", "1/2박", "1박", "2박"];
+
+  /* 샘플 모드 20칸 */
+  var DJ_SAMPLES = [
+    ["큰북", function (t) { kick(t, 1); }],
+    ["작은북", function (t) { snare(t, 1); }],
+    ["박수", function (t) { clap(t, 1); }],
+    ["하이햇", function (t) { hat(t, 1, false); }],
+    ["열린햇", function (t) { hat(t, 0.9, true); }],
+    ["톰톰", function (t) { tom(t, 1); }],
+    ["딱", function (t) { rim(t, 1); }],
+    ["심벌", function (t) { crash(t, 0.8); }],
+    ["에어혼", function (t) { airHorn(t); }],
+    ["스크래치", function (t) { scratch(t); }],
+    ["올라감", function (t) { fx(0, t); }],
+    ["쾅", function (t) { fx(1, t); }],
+    ["떨어짐", function (t) { fx(2, t); }],
+    ["휙", function (t) { fx(3, t); }],
+    ["사이렌", function (t) { fx(5, t); }],
+    ["저음", function (t) { fx(7, t); }],
+    ["808", function (t) { sub808(33, t, 0.7, 1); }],
+    ["슈퍼소", function (t) { superSaw(69, t, 0.5, 1.4, 4200); }],
+    ["보컬", function (t) { chop(72, t, 0.35, 1.2); }],
+    ["웝", function (t) { wobble(33, t, 0.6, 1); }]
+  ];
+
+  var DJ_ROWS = [
+    { label: "드럼",   hue: "--f-drum",  kind: "loop", key: "drums" },
+    { label: "베이스", hue: "--f-bass",  kind: "loop", key: "bass" },
+    { label: "화음",   hue: "--f-chord", kind: "loop", key: "chords" },
+    { label: "멜로디", hue: "--f-lead",  kind: "loop", key: "lead" },
+    { label: "효과음", hue: "--f-fx",    kind: "fx" }
+  ];
+
   var BANKS = [
     { id: "basic",  name: "기본",  drums: DRUMS,    bass: BASS,    chords: CHORDS,    lead: LEAD,    prog: PROG,    pump: 0 },
     { id: "french", name: "디스코", drums: FH_DRUMS, bass: FH_BASS, chords: FH_CHORDS, lead: FH_LEAD, prog: PROG_FH, pump: 0.62 },
     { id: "dj", name: "디제이", drums: DJ_DRUMS, bass: DJ_BASS, chords: DJ_CHORDS, lead: DJ_LEAD,
       prog: PROG_DJ, pump: 0.75,
       bassFn: sub808, chordFn: superChord, leadFn: chop,
-      fxFn: fxDJ, fxNames: DJ_FXN }
+      fxFn: fxDJ, fxNames: DJ_FXN,
+      rows: DJ_ROWS, cols: 5, modeCol: true }
   ];
   var bankIdx = 0;
   function bank() { return BANKS[bankIdx]; }
+  /* 묶음이 자기 판 모양을 들고 있을 수 있다 */
+  function rowsOf() { return bank().rows || SYNTH_ROWS; }
+  function colsOf() { return bank().cols || 8; }
 
   var PERC = ["큰북", "작은북", "박수", "하이햇", "열린햇", "톰톰", "딱", "심벌"];
   var FXN  = ["올라감", "쾅", "떨어짐", "휙", "찌직", "사이렌", "치직", "저음"];
@@ -1746,7 +1793,7 @@
 
   function paintOne(p) {
     var r = +p.dataset.r, c = +p.dataset.c;
-    var hueVar = mode === "synth" ? SYNTH_ROWS[r].hue
+    var hueVar = mode === "synth" ? (rowsOf()[r] || SYNTH_ROWS[0]).hue
                : (p.dataset.empty === "1" ? "--f-empty" : "--f-pack");
     p.style.setProperty("--hue", "var(" + hueVar + ")");
     p.dataset.lit = "0";
@@ -1869,7 +1916,12 @@
   var flipRow = $("flipyrow"), glideEl = $("glide");
   var sheet = $("sheet"), scrim = $("scrim");
   var beatEls = [], chainChips = [];
-  var chordEl = null, swpEl = null, swpBar = null;
+  var chordEl = null, swpEl = null, swpBar = null, bpmChip = null;
+  function nudgeBpm(d) {
+    bpm = Math.max(70, Math.min(170, bpm + d));
+    bpmEl.value = bpm; bpmV.textContent = bpm;
+    if (bpmChip) bpmChip.textContent = bpm;
+  }
 
   function padAt(r, c) { return pads[r * COLS + c]; }
   function xyToPad(x, y) {
@@ -1921,7 +1973,7 @@
 
     for (var r = 0; r < ROWS_N; r++) {
       var lab = document.createElement("span");
-      lab.textContent = mode === "synth" ? SYNTH_ROWS[r].label : (r + 1) + "줄";
+      lab.textContent = mode === "synth" ? rowsOf()[r].label : (r + 1) + "줄";
       rail.appendChild(lab);
     }
     for (var rr = 0; rr < ROWS_N; rr++) {
@@ -1939,11 +1991,20 @@
 
   function capFor(r, c) {
     if (mode === "synth") {
-      var row = SYNTH_ROWS[r];
+      var B0 = bank();
+      if (B0.modeCol && c === COLS - 1) return DJ_MODES[r] || "";
+      if (B0.modeCol) {
+        var i20 = r * (COLS - 1) + c;
+        if (djMode === 2) return (DJ_SAMPLES[i20] || [""])[0];
+        if (djMode === 3) return NOTE_NAMES[((r * (COLS - 1) + c) % 7)];
+        if (djMode === 1) return r < 4 ? ROLL_NAMES[c] : (B0.fxNames || FXN)[c];
+      }
+      var row = rowsOf()[r];
+      if (!row) return "";
       if (row.kind === "loop") return bank()[row.key][c].name;
       if (row.kind === "perc") return PERC[c];
       if (row.kind === "fx")   return (bank().fxNames || FXN)[c];
-      return ["라", "시", "도", "레", "미", "파", "솔", "라"][c] || "";
+      return NOTE_NAMES[c % 7] || "";
     }
     var y = flipY ? (pack.y - r) : (r + 1);
     var slot = pack.map.get(chain + ":" + (c + 1) + ":" + y);
@@ -1957,7 +2018,9 @@
       for (var c = 0; c < COLS; c++) {
         var p = padAt(r, c);
         if (!p) continue;
-        var hueVar = mode === "synth" ? SYNTH_ROWS[r].hue : null;
+        var hueVar = mode === "synth" ? (rowsOf()[r] || SYNTH_ROWS[0]).hue : null;
+        var isMode = mode === "synth" && bank().modeCol && c === COLS - 1;
+        if (isMode) hueVar = r === 4 ? "--f-stop" : "--f-perc";
         var empty = "0";
         if (mode === "pack") {
           var y = flipY ? (pack.y - r) : (r + 1);
@@ -1967,13 +2030,14 @@
         }
         var cap = capFor(r, c);
         p.style.setProperty("--hue", "var(" + hueVar + ")");
+        if (isMode) p.dataset.lit = (r === djMode && r < 4) ? "1" : "0";
         p.dataset.empty = empty;
         p.querySelector(".cap").textContent = cap;
         p.querySelector(".key").textContent =
           (r < 4 && c < 8) ? KEYROWS[r][c]
           : (r >= 4 && r < 8 && c < 8) ? "⇧" + KEYROWS[r - 4][c] : "";
         p.setAttribute("aria-label",
-          (mode === "synth" ? SYNTH_ROWS[r].label : chain + "페이지") + " " + (cap || "빈 칸"));
+          (mode === "synth" ? (rowsOf()[r] || {}).label || "" : chain + "페이지") + " " + (cap || "빈 칸"));
       }
     }
     if (mode === "synth") syncLights();
@@ -2053,7 +2117,39 @@
       flashPad(padAt(r, c));
       return;
     }
-    var row = SYNTH_ROWS[r], now = qTime() + 0.001;
+    var B1 = bank();
+    /* 오른쪽 기둥 = 모드 전환 */
+    if (B1.modeCol && c === COLS - 1) {
+      if (r === 4) { panicAll(); updatePlay(); }
+      else { djMode = r; paintPads(); }
+      flashPad(padAt(r, c));
+      return;
+    }
+    /* 모드별 연주판 */
+    if (B1.modeCol) {
+      var now2 = qTime() + 0.001;
+      if (djMode === 1) {                       // 롤 — 누르고 있는 동안만
+        if (r < 4) { rollLayer = r; rollStep = ROLL_STEPS[c] || 4; if (!playing) start(); }
+        else (B1.fxFn || fx)(c, now2);
+        flashPad(padAt(r, c));
+        return;
+      }
+      if (djMode === 2) {                       // 샘플
+        var sm = DJ_SAMPLES[r * (COLS - 1) + c];
+        if (sm) sm[1](now2);
+        flashPad(padAt(r, c));
+        return;
+      }
+      if (djMode === 3) {                       // 음
+        var idx = r * (COLS - 1) + c;
+        superSaw(deg(idx), now2, 0.55, 1.3, 4600);
+        flashPad(padAt(r, c));
+        return;
+      }
+    }
+    var row = rowsOf()[r];
+    if (!row) return;
+    var now = qTime() + 0.001;
     if (row.kind === "loop") {
       if (!playing) start();
       if (active[r] === c) {
@@ -2076,6 +2172,10 @@
 
   function release(r, c) {
     if (armed) { stopRec(); return; }
+    if (mode === "synth" && bank().modeCol && djMode === 1 && r < 4 && c < COLS - 1) {
+      if (rollLayer === r) rollLayer = -1;      // 손을 떼면 원래 흐름으로
+      return;
+    }
     if (mode !== "pack" || !pack) return;
     var y = flipY ? (pack.y - r) : (r + 1);
     packRelease(c + 1, y);
@@ -2087,7 +2187,7 @@
     var r = +p.dataset.r, c = +p.dataset.c;
     midiLight(r, c, "1");
     setTimeout(function () {
-      if (mode === "synth" && r < 4) syncLights();
+      if (mode === "synth" && (rowsOf()[r] || {}).kind === "loop") syncLights();
       else { p.dataset.lit = "0"; midiLight(r, c, "0"); }
     }, 150);
   }
@@ -2143,7 +2243,13 @@
      ═══════════════════════════════════════════════════════ */
   var bpm = 102, playing = false, timer = null;
   var step = 0, absStep = 0, nextTime = 0;
-  var active = [null, null, null, null];
+  var active = [null, null, null, null, null, null, null, null];
+  var rollLayer = -1, rollStep = 4;
+  function loopRows() {
+    var rw = rowsOf(), a = [];
+    for (var i = 0; i < rw.length; i++) if (rw[i].kind === "loop") a.push(i);
+    return a;
+  }
   var pending = [];
   var visQ = [];
 
@@ -2163,23 +2269,50 @@
       pending = []; syncLights();
     }
     var chd = B.prog[Math.floor(st / 16) % 4];
-    if (active[0] !== null) {
-      var d = B.drums[active[0]];
+    var RW = B.rows || SYNTH_ROWS;
+    var slotOf = function (key) {
+      for (var i = 0; i < RW.length; i++) {
+        if (RW[i].kind === "loop" && RW[i].key === key) return active[i];
+      }
+      return null;
+    };
+    var aDrums = slotOf("drums"), aBass = slotOf("bass"),
+        aChords = slotOf("chords"), aLead = slotOf("lead");
+
+    /* 롤: 그 줄의 원래 패턴 대신 잘게 반복한다.
+       손을 떼면 아무 흔적 없이 원래 흐름으로 돌아가는 게 핵심이다. */
+    if (rollLayer >= 0 && (B.rows || SYNTH_ROWS)[rollLayer]) {
+      var rk = (B.rows || SYNTH_ROWS)[rollLayer].key;
+      if (st % rollStep === 0) {
+        var rd = spb() * rollStep * 0.9;
+        if (rk === "drums") { kick(t, 1); hat(t, 0.5, false); }
+        else if (rk === "bass") (B.bassFn || bassNote)(chd.root + 12, t, rd, 1);
+        else if (rk === "chords") (B.chordFn || chordVoice)(chd.notes, t, rd, 1.1, false, 0);
+        else if (rk === "lead") (B.leadFn || leadNote)(deg(4), t, rd, 1.1);
+      }
+      if (rk === "drums") aDrums = null;
+      else if (rk === "bass") aBass = null;
+      else if (rk === "chords") aChords = null;
+      else if (rk === "lead") aLead = null;
+    }
+
+    if (aDrums !== null) {
+      var d = B.drums[aDrums];
       if (d.k.indexOf(inBar) >= 0) kick(t, 1);
       if (d.s.indexOf(inBar) >= 0) snare(t, 0.9);
       if (d.c.indexOf(inBar) >= 0) clap(t, 0.8);
       if (d.h.indexOf(inBar) >= 0) hat(t, inBar % 4 === 0 ? 1 : 0.6, false);
       if (d.o.indexOf(inBar) >= 0) hat(t, 0.7, true);
     }
-    if (active[1] !== null) {
-      var bp = B.bass[active[1]];
+    if (aBass !== null) {
+      var bp = B.bass[aBass];
       var bfn = bp.wob ? wobble : (B.bassFn || bassNote);
       bp.n.forEach(function (e) {
         if (e[0] === inBar) bfn(chd.root + 12 + e[1], t, e[2] * spb() * 0.9, 1);
       });
     }
-    if (active[2] !== null) {
-      var cc = B.chords[active[2]];
+    if (aChords !== null) {
+      var cc = B.chords[aChords];
       if (cc.hits.indexOf(inBar) >= 0) {
         var sw = (cc.sweep && sweepOn) ? sweepCut(abs) : 0;
         var cfn = B.chordFn || chordVoice;
@@ -2195,8 +2328,8 @@
         }
       }
     }
-    if (active[3] !== null) {
-      var lp2 = B.lead[active[3]];
+    if (aLead !== null) {
+      var lp2 = B.lead[aLead];
       var lfn = lp2.saw ? sawLead : (B.leadFn || leadNote);
       lp2.n.forEach(function (e) {
         if (e[0] === inBar) lfn(deg(e[1]), t, e[2] * spb() * 0.92, 1);
@@ -2230,14 +2363,19 @@
     beatEls.forEach(function (b) { b.classList.remove("lit"); });
   }
   function panicAll() {
-    active = [null, null, null, null]; pending = [];
+    for (var i = 0; i < active.length; i++) active[i] = null;
+    pending = [];
     stopSeq(); syncLights();
   }
 
   function syncLights() {
     if (mode !== "synth") return;
-    for (var r = 0; r < 4; r++) {
+    var lr = loopRows();
+    for (var li = 0; li < lr.length; li++) {
+      var r = lr[li];
+      var modeCol = bank().modeCol ? COLS - 1 : -1;
       for (var c = 0; c < COLS; c++) {
+        if (c === modeCol) continue;          // 모드 기둥은 건드리지 않는다
         var lit = active[r] === c ? "1" : "0";
         if (pending.some(function (p) { return p.row === r && p.col === c; })) lit = "2";
         var p = padAt(r, c);
@@ -2272,7 +2410,9 @@
           swpBar.style.width = (x * 100).toFixed(1) + "%";
         }
         if (e.st % 16 === 0 && mode === "synth") {
-          for (var r = 0; r < 4; r++) {
+          var lrs = loopRows();
+          for (var li2 = 0; li2 < lrs.length; li2++) {
+            var r = lrs[li2];
             if (active[r] !== null) {
               var p = padAt(r, active[r]);
               if (p) { p.classList.remove("pulse"); void p.offsetWidth; p.classList.add("pulse"); }
@@ -2304,7 +2444,7 @@
       legendBox.hidden = true; metaEl.hidden = false; logEl.hidden = false;
     } else {
       stopAll(); autoStop();
-      COLS = 8; ROWS_N = 8;
+      COLS = colsOf(); ROWS_N = rowsOf().length;
       ttl.textContent = "기본 소리";
       playBtn.disabled = false;
       $("tosynth").disabled = true;
@@ -2344,6 +2484,31 @@
       }
       strip.appendChild(wrap);
 
+      var bl0 = document.createElement("span");
+      bl0.className = "striplabel";
+      bl0.textContent = "빠르기";
+      bl0.style.marginLeft = "0.5rem";
+      strip.appendChild(bl0);
+
+      var minus = document.createElement("button");
+      minus.type = "button"; minus.className = "chip"; minus.textContent = "−";
+      minus.setAttribute("aria-label", "느리게");
+      minus.addEventListener("click", function () { nudgeBpm(-4); });
+      strip.appendChild(minus);
+
+      bpmChip = document.createElement("span");
+      bpmChip.className = "chordv";
+      bpmChip.style.minWidth = "3.6ch";
+      bpmChip.textContent = bpm;
+      bpmChip.title = "지금 빠르기";
+      strip.appendChild(bpmChip);
+
+      var plus = document.createElement("button");
+      plus.type = "button"; plus.className = "chip"; plus.textContent = "+";
+      plus.setAttribute("aria-label", "빠르게");
+      plus.addEventListener("click", function () { nudgeBpm(4); });
+      strip.appendChild(plus);
+
       chordEl = document.createElement("span");
       chordEl.className = "chordv";
       chordEl.textContent = bank().prog[0].name || "—";
@@ -2375,11 +2540,23 @@
   }
 
   function setBank(i) {
+    var sizeChanged = (BANKS[i].cols || 8) !== COLS ||
+                      (BANKS[i].rows || SYNTH_ROWS).length !== ROWS_N;
     bankIdx = i;
+    djMode = 0; rollLayer = -1;
     pumpAmt = BANKS[i].pump;
     if (duck) {
       duck.gain.cancelScheduledValues(ctx.currentTime);
       duck.gain.setValueAtTime(1, ctx.currentTime);
+    }
+    if (sizeChanged && mode === "synth") {
+      COLS = colsOf(); ROWS_N = rowsOf().length;
+      active = active.slice(0, ROWS_N);
+      while (active.length < ROWS_N) active.push(null);
+      pending = [];
+      buildStrip();
+      buildGrid();                       // 판 크기가 달라지면 다시 짠다
+      return;
     }
     buildStrip();
     paintPads();
@@ -2477,7 +2654,10 @@
   $("closesheet").addEventListener("click", closeSheet);
   scrim.addEventListener("click", closeSheet);
 
-  bpmEl.addEventListener("input", function () { bpm = +bpmEl.value; bpmV.textContent = bpm; });
+  bpmEl.addEventListener("input", function () {
+    bpm = +bpmEl.value; bpmV.textContent = bpm;
+    if (bpmChip) bpmChip.textContent = bpm;
+  });
   volEl.addEventListener("input", function () {
     volV.textContent = volEl.value;
     if (outGain) outGain.gain.value = volEl.value / 100 * 0.9;
