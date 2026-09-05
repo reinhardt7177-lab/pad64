@@ -9,3 +9,6 @@
 
 .vercel
 .env*
+
+# Local browser test output
+tests/artifacts/

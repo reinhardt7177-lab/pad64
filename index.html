@@ -31,6 +31,7 @@
     --f-note:  #FFD23F;
     --f-pack:  #2BD4EE;
     --f-empty: #394054;
+    --f-stop:  #FF6B6B;
 
     --cellw: 64px;
     --cellh: 64px;          /* JS가 화면에 맞춰 계산해 넣는다 */
@@ -544,6 +545,14 @@
     background: #1B1F2B; border: 1px solid var(--rule); border-bottom-width: 2px;
     border-radius: 5px; padding: 0.05rem 0.35rem; color: var(--ink);
   }
+  select { color: var(--ink); background: var(--bezel); border: 1px solid var(--rule); padding: .35rem; border-radius: 6px; }
+  .stop-pad { outline: 2px solid var(--f-stop); outline-offset: -3px; }
+  .performance { white-space: normal; min-width: 10rem; max-width: 24rem; line-height: 1.5; }
+  .scene-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem; flex: none; }
+  @media (max-width: 43.99rem), (max-aspect-ratio: 5/4) { .scene-buttons { display: flex; } }
+  .mix-row { border-top: 1px solid var(--rule); padding-top: .5rem; margin-top: .5rem; }
+  .edit-box { max-height: 95dvh; overflow-y: auto; }
+  @media (pointer: coarse) and (min-width: 44rem) and (min-aspect-ratio: 5/4) { .strip { height: auto; } }
 </style>
 
 <div class="app">
@@ -582,6 +591,13 @@
       <span class="grow"></span>
       <label class="ctl" style="flex:0 0 auto"><input id="snap" type="checkbox" checked /> 박자에 맞추기</label>
     </div>
+    <div class="edit-row">
+      <label>원곡 BPM <input class="tin" id="sourcebpm" type="number" min="30" max="300" value="102" style="width:5rem" /></label>
+      <label>첫 박(초) <input class="tin" id="sourcebeat" type="number" min="0" step="0.001" value="0" style="width:6rem" /></label>
+      <label>구간 <select id="beatlength"><option value="0">직접 선택</option><option value="1">1박</option><option value="2">2박</option><option value="4">4박</option><option value="8">8박</option></select></label>
+      <label><input id="edgefade" type="checkbox" checked /> 경계 페이드 3ms</label>
+    </div>
+    <p class="hint">원곡의 BPM과 첫 박 위치를 입력하세요. 재생 속도와 음정은 원곡 그대로 유지됩니다.</p>
     <p class="hint">파형을 <b>드래그</b>하면 구간이 잡힙니다. 양 끝 손잡이를 잡아 늘리거나 줄이세요.</p>
     <div class="edit-row">
       <button class="ico" id="editplay" type="button">▶ 들어보기</button>
@@ -632,12 +648,16 @@
       <label class="ctl">빠르기 <input id="bpm" type="range" min="70" max="170" step="1" value="102" /><span class="val" id="bpmv">102</span></label>
     </div>
     <div class="row">
-      <label class="ctl" style="flex:0 0 auto"><input id="quant" type="checkbox" checked /> 박자 맞추기</label>
+      <label class="ctl" style="flex:0 0 auto"><input id="quant" type="checkbox" /> 원샷 박자 보정</label>
+      <label>보정 간격 <select id="quantgrid"><option value="1">1/16</option><option value="2">1/8</option></select></label>
+      <label><input id="notegate" type="checkbox" checked /> 음 모드: 누르는 동안 유지</label>
       <label class="ctl" style="flex:0 0 auto"><input id="glide" type="checkbox" checked /> 손가락 훑기</label>
       <label class="ctl" style="flex:0 0 auto"><input id="pump" type="checkbox" checked /> 사이드체인 펌핑</label>
       <label class="ctl" style="flex:0 0 auto"><input id="sweepon" type="checkbox" checked /> 필터 스윕</label>
       <label class="ctl" style="flex:0 0 auto" id="flipyrow" hidden><input id="flipy" type="checkbox" /> Y축 뒤집기</label>
     </div>
+    <div id="mixer"></div>
+    <p class="note">루프는 다음 마디에 전환됩니다. 원샷은 기본 즉시 재생입니다. 반복은 오디오 구간이 아닌 악기 음을 다시 칩니다.</p>
   </section>
 
   <section>
@@ -796,7 +816,7 @@
     { root: 33, notes: [57, 60, 64, 67], name: "라단"   },
     { root: 38, notes: [57, 62, 65, 69], name: "레단"   },
     { root: 31, notes: [55, 59, 62, 65], name: "솔"    },
-    { root: 36, notes: [55, 60, 64, 67], name: "도" }
+    { root: 36, notes: [55, 59, 60, 64], name: "도장7" }
   ];
 
   /* ── 디제이 리믹스 ── */
@@ -853,8 +873,9 @@
   /* ── 모드 ──
      진짜 DJ 장비는 패드를 늘리지 않는다. 오른쪽 기둥으로 의미를 갈아끼운다.
      20칸 x 4모드 = 80가지를 25개 버튼으로 낸다. */
-  var DJ_MODES = ["루프", "롤", "샘플", "음", "정지"];
+  var DJ_MODES = ["루프", "반복", "샘플", "음", "정지"];
   var djMode = 0;
+  var djPage = 0;
   var ROLL_STEPS = [1, 2, 4, 8];              // 16분 단위: 1/4박 1/2박 1박 2박
   var ROLL_NAMES = ["1/4박", "1/2박", "1박", "2박"];
 
@@ -929,40 +950,144 @@
      ═══════════════════════════════════════════════════════ */
   var ctx = null, master, wet, verb, noiseBuf, duck, punch, outGain;
   var pumpAmt = 0, pumpOn = true, sweepOn = true;
-  var quantOn = true, gridAnchor = 0;
+  var quantOn = false, quantSteps = 1, gridAnchor = 0;
+  var tempoSegments = [{ at: 0, anchor: 0, bpm: 102 }], gateNotes = true;
+  var sourceNodes = new Set(), currentVoice = null, mixGate, mixParts = {};
+  var OUTPUT_HEADROOM = 0.65;
+  var PARTS = ["drums", "bass", "chords", "lead", "fx"];
+  var PART_LABELS = ["드럼", "베이스", "화음", "멜로디", "효과음"];
+  var mixSettings = {};
+  PARTS.forEach(function (p) { mixSettings[p] = { level: 0.75, cut: 16000, wet: 0.65 }; });
 
-  /* 손으로 친 소리를 16분음표 격자에 떨어뜨린다.
-     즉시 나는 것보다 최대 한 칸(102BPM 에서 0.15초) 늦지만,
-     그 대가로 아무렇게나 쳐도 박자가 맞는다. */
+  // All scheduled sources belong to a stoppable voice, including future notes.
+  function trackSource(s) {
+    sourceNodes.add(s);
+    var group = currentVoice;
+    if (group) group.sources.add(s);
+    s.addEventListener("ended", function () {
+      sourceNodes.delete(s);
+      if (group) group.sources.delete(s);
+      s.disconnect();
+    });
+    return s;
+  }
+  function oscillator() { return trackSource(ctx.createOscillator()); }
+  function bufferSource() { return trackSource(ctx.createBufferSource()); }
+  function playSound(part, velocity, fn) {
+    var previous = currentVoice;
+    var voice = { part: part, velocity: Math.max(0, Math.min(1, velocity == null ? 1 : velocity)), sources: new Set(), gains: [] };
+    currentVoice = voice;
+    try { fn(); } finally { currentVoice = previous; }
+    return voice;
+  }
+  function connectVoice(node, send, bypass) {
+    var voice = currentVoice, part = mixParts[voice ? voice.part : "fx"];
+    var scale = ctx.createGain();
+    scale.gain.value = voice ? voice.velocity : 1;
+    node.connect(scale);
+    scale.connect(bypass ? part.punch : part.dry);
+    if (voice) voice.gains.push(scale);
+    if (send) {
+      var sg = ctx.createGain(); sg.gain.value = send;
+      scale.connect(sg); sg.connect(part.wet);
+    }
+  }
+  function releaseVoice(voice) {
+    if (!voice || !ctx) return;
+    var now = ctx.currentTime;
+    voice.gains.forEach(function (g) {
+      g.gain.cancelScheduledValues(now);
+      g.gain.setValueAtTime(g.gain.value, now);
+      g.gain.linearRampToValueAtTime(0, now + 0.012);
+    });
+    voice.sources.forEach(function (s) { try { s.stop(now + 0.015); } catch (e) {} });
+  }
+  function updateMix(part) {
+    if (!ctx || !mixParts[part]) return;
+    var p = mixParts[part], s = mixSettings[part], t = ctx.currentTime;
+    p.dry.gain.setTargetAtTime(s.level, t, 0.015);
+    p.punch.gain.setTargetAtTime(s.level, t, 0.015);
+    p.wet.gain.setTargetAtTime(s.level * s.wet, t, 0.015);
+    p.filter.frequency.setTargetAtTime(s.cut, t, 0.015);
+    p.kickFilter.frequency.setTargetAtTime(s.cut, t, 0.015);
+  }
+  function buildMixGraph() {
+    var comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.knee.value = 22;
+    comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
+    master = ctx.createGain(); duck = ctx.createGain(); punch = ctx.createGain();
+    wet = ctx.createGain(); wet.gain.value = 0.9;
+    verb = ctx.createConvolver(); verb.buffer = makeIR(2.0, 2.6);
+    mixGate = ctx.createGain();
+    master.connect(duck); duck.connect(comp); punch.connect(comp);
+    wet.connect(verb); verb.connect(duck); comp.connect(mixGate); mixGate.connect(outGain);
+    PARTS.forEach(function (key) {
+      var p = { dry: ctx.createGain(), punch: ctx.createGain(), wet: ctx.createGain(), filter: ctx.createBiquadFilter(), kickFilter: ctx.createBiquadFilter() };
+      p.filter.type = p.kickFilter.type = "lowpass";
+      p.dry.gain.value = p.punch.gain.value = mixSettings[key].level;
+      p.wet.gain.value = mixSettings[key].level * mixSettings[key].wet;
+      p.filter.frequency.value = p.kickFilter.frequency.value = mixSettings[key].cut;
+      p.dry.connect(p.filter); p.filter.connect(master);
+      p.punch.connect(p.kickFilter); p.kickFilter.connect(punch); p.wet.connect(wet);
+      mixParts[key] = p; updateMix(key);
+    });
+  }
+  function silenceAudio() {
+    if (!ctx) return;
+    var now = ctx.currentTime, oldGate = mixGate;
+    oldGate.gain.cancelScheduledValues(now);
+    oldGate.gain.setValueAtTime(oldGate.gain.value, now);
+    oldGate.gain.linearRampToValueAtTime(0, now + 0.012);
+    sourceNodes.forEach(function (s) { try { s.stop(now + 0.015); } catch (e) {} });
+    sourceNodes.clear();
+    // A fresh graph prevents old reverb and compressor tails returning on restart.
+    buildMixGraph();
+    setTimeout(function () { oldGate.disconnect(); }, 80);
+  }
+
+  /* 원샷은 즉시 재생. 보정을 켠 경우에만 공통 transport의
+     1/8 또는 1/16 격자를 사용하며 예정된 템포 경계도 따라간다. */
   function qTime() {
     if (!ctx) return 0;
     var now = ctx.currentTime;
     if (!quantOn) return now;
-    var step = 60 / bpm / 4;
-    if (!gridAnchor) gridAnchor = now;
-    var k = Math.ceil((now - gridAnchor) / step - 0.001);
-    return gridAnchor + k * step;
+    var seg = tempoAt(now), start = now;
+    for (var i = tempoSegments.indexOf(seg); i < tempoSegments.length; i++) {
+      seg = tempoSegments[i];
+      var span = 60 / seg.bpm / 4 * quantSteps;
+      var when = seg.anchor + Math.ceil((start - seg.anchor) / span - 1e-8) * span;
+      if (!tempoSegments[i + 1] || when < tempoSegments[i + 1].at - 1e-8) return Math.max(now, when);
+      start = tempoSegments[i + 1].at;
+    }
+    return now;
+  }
+  function tempoAt(t) {
+    var seg = tempoSegments[0];
+    for (var i = 1; i < tempoSegments.length && tempoSegments[i].at <= t + 1e-8; i++) seg = tempoSegments[i];
+    return seg;
+  }
+  function setTempo(value) {
+    var n = Math.max(70, Math.min(170, Math.round(value)));
+    if (!isFinite(n)) return;
+    if (playing) tick();
+    var at = playing ? nextTime : (ctx ? ctx.currentTime : 0);
+    var anchor = playing ? at - absStep * 60 / n / 4 : at;
+    tempoSegments = tempoSegments.filter(function (s) { return s.at < at; });
+    tempoSegments.push({ at: at, anchor: anchor, bpm: n });
+    bpm = n; gridAnchor = anchor;
+    bpmEl.value = n; bpmV.textContent = n;
+    if (bpmChip) bpmChip.textContent = n;
   }
 
   function initAudio() {
     if (ctx) return true;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return false;
-    ctx = new AC();
-    var comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14; comp.knee.value = 22;
-    comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
-    master  = ctx.createGain();   // 킥을 뺀 나머지 전부
-    duck    = ctx.createGain();   // 사이드체인이 눌러대는 자리
-    punch   = ctx.createGain();   // 킥 전용 — 킥이 자기를 누르면 펌핑이 안 들린다
+    ctx = new AC({ latencyHint: "interactive" });
     outGain = ctx.createGain();
-    outGain.gain.value = volEl.value / 100 * 0.9;
-    verb = ctx.createConvolver(); verb.buffer = makeIR(2.0, 2.6);
-    wet = ctx.createGain(); wet.gain.value = 0.9;
-    master.connect(duck); duck.connect(comp);
-    punch.connect(comp);
-    wet.connect(verb); verb.connect(duck);
-    comp.connect(outGain); outGain.connect(ctx.destination);
+    outGain.gain.value = volEl.value / 100 * OUTPUT_HEADROOM;
+    outGain.connect(ctx.destination);
+    buildMixGraph();
     var n = ctx.sampleRate * 2;
     noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
     var d = noiseBuf.getChannelData(0);
@@ -981,12 +1106,11 @@
     return buf;
   }
   function noise(t, dur) {
-    var s = ctx.createBufferSource();
+    var s = bufferSource();
     s.buffer = noiseBuf; s.loop = true; s.start(t); s.stop(t + dur); return s;
   }
   function out(node, g, t, send, bus) {
-    node.connect(g); g.connect(bus || master);
-    if (send) { var sg = ctx.createGain(); sg.gain.value = send; g.connect(sg); sg.connect(wet); }
+    node.connect(g); connectVoice(g, send, bus === punch);
   }
 
   /* 킥이 칠 때마다 나머지 전부를 확 눌렀다 놓는다.
@@ -1003,7 +1127,7 @@
   function kick(t, v) {
     v = v || 1;
     ducker(t);
-    var o = ctx.createOscillator(), g = ctx.createGain();
+    var o = oscillator(), g = ctx.createGain();
     o.frequency.setValueAtTime(155, t);
     o.frequency.exponentialRampToValueAtTime(44, t + 0.11);
     g.gain.setValueAtTime(0.0001, t);
@@ -1023,7 +1147,7 @@
     g.gain.setValueAtTime(0.7 * v, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
     s.connect(f); out(f, g, t, 0.3);
-    var o = ctx.createOscillator(), og = ctx.createGain();
+    var o = oscillator(), og = ctx.createGain();
     o.type = "triangle"; o.frequency.value = 195;
     og.gain.setValueAtTime(0.4 * v, t);
     og.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
@@ -1052,7 +1176,7 @@
   }
   function tom(t, v) {
     v = v || 1;
-    var o = ctx.createOscillator(), g = ctx.createGain();
+    var o = oscillator(), g = ctx.createGain();
     o.frequency.setValueAtTime(240, t);
     o.frequency.exponentialRampToValueAtTime(96, t + 0.25);
     g.gain.setValueAtTime(0.6 * v, t);
@@ -1061,7 +1185,7 @@
   }
   function rim(t, v) {
     v = v || 1;
-    var o = ctx.createOscillator(), g = ctx.createGain();
+    var o = oscillator(), g = ctx.createGain();
     o.type = "square"; o.frequency.value = 1720;
     g.gain.setValueAtTime(0.3 * v, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
@@ -1085,12 +1209,12 @@
     g.gain.setTargetAtTime(0.34 * v, t + 0.01, 0.09);
     g.gain.setTargetAtTime(0.0001, t + dur, 0.035);
     ["sawtooth", "sine"].forEach(function (type, i) {
-      var o = ctx.createOscillator();
+      var o = oscillator();
       o.type = type; o.frequency.value = hz(m);
       var og = ctx.createGain(); og.gain.value = i ? 0.85 : 0.5;
       o.connect(og); og.connect(f); o.start(t); o.stop(t + dur + 0.2);
     });
-    f.connect(g); g.connect(master);
+    f.connect(g); connectVoice(g, 0);
   }
   function chordVoice(ms, t, dur, v, swell, cut, cut2) {
     v = v || 1;
@@ -1110,14 +1234,13 @@
     g.gain.setTargetAtTime(0.0001, t + dur, 0.14);
     ms.forEach(function (m) {
       [-6, 0, 6].forEach(function (cents) {
-        var o = ctx.createOscillator();
+        var o = oscillator();
         o.type = "sawtooth";
         o.frequency.value = hz(m) * Math.pow(2, cents / 1200);
         o.connect(f); o.start(t); o.stop(t + dur + 0.5);
       });
     });
-    f.connect(g); g.connect(master);
-    var s = ctx.createGain(); s.gain.value = 0.55; g.connect(s); s.connect(wet);
+    f.connect(g); connectVoice(g, 0.55);
   }
   function leadNote(m, t, dur, v) {
     v = v || 1;
@@ -1128,13 +1251,12 @@
     g.gain.setTargetAtTime(0.14 * v, t + 0.02, 0.12);
     g.gain.setTargetAtTime(0.0001, t + dur, 0.06);
     [["square", 0.5, 0], ["triangle", 0.9, 0], ["sawtooth", 0.28, 7]].forEach(function (p) {
-      var o = ctx.createOscillator();
+      var o = oscillator();
       o.type = p[0]; o.frequency.value = hz(m) * Math.pow(2, p[2] / 1200);
       var og = ctx.createGain(); og.gain.value = p[1];
       o.connect(og); og.connect(f); o.start(t); o.stop(t + dur + 0.3);
     });
-    f.connect(g); g.connect(master);
-    var s = ctx.createGain(); s.gain.value = 0.45; g.connect(s); s.connect(wet);
+    f.connect(g); connectVoice(g, 0.45);
   }
   /* ── 디제이 리믹스용 악기 ──
      이 장르는 패턴이 아니라 음색이 전부다. 톱니 일곱 겹, 미끄러지는 808,
@@ -1152,13 +1274,12 @@
     g.gain.exponentialRampToValueAtTime(0.075 * v, t + 0.014);
     g.gain.setTargetAtTime(0.0001, t + dur, 0.07);
     [-16, -11, -5, 0, 5, 11, 16].forEach(function (c) {
-      var o = ctx.createOscillator();
+      var o = oscillator();
       o.type = "sawtooth";
       o.frequency.value = f * Math.pow(2, c / 1200);
       o.connect(lp); o.start(t); o.stop(t + dur + rel);
     });
-    lp.connect(g); g.connect(master);
-    var sd = ctx.createGain(); sd.gain.value = 0.4; g.connect(sd); sd.connect(wet);
+    lp.connect(g); connectVoice(g, 0.4);
   }
   function superChord(ms, t, dur, v, swell, cut) {
     for (var i = 0; i < ms.length; i++) superSaw(ms[i], t, dur, (v || 1) * 0.8, cut || 3600);
@@ -1169,7 +1290,7 @@
   function sub808(m, t, dur, v) {
     v = v || 1;
     var f = hz(m), g = ctx.createGain();
-    var o = ctx.createOscillator();
+    var o = oscillator();
     o.type = "sine";
     o.frequency.setValueAtTime(f * 2.6, t);
     o.frequency.exponentialRampToValueAtTime(f, t + 0.07);
@@ -1177,11 +1298,11 @@
     g.gain.exponentialRampToValueAtTime(0.95 * v, t + 0.01);
     g.gain.setTargetAtTime(0.0001, t + dur, 0.1);
     o.connect(g);
-    var o2 = ctx.createOscillator(), g2 = ctx.createGain();
+    var o2 = oscillator(), g2 = ctx.createGain();
     o2.type = "triangle"; o2.frequency.value = f * 2;
     g2.gain.value = 0.12 * v;
     o2.connect(g2); g2.connect(g);
-    g.connect(master);
+    connectVoice(g, 0);
     o.start(t); o.stop(t + dur + 0.5);
     o2.start(t); o2.stop(t + dur + 0.5);
   }
@@ -1193,14 +1314,14 @@
     var lp = ctx.createBiquadFilter(), g = ctx.createGain();
     lp.type = "lowpass"; lp.Q.value = 9;
     lp.frequency.value = 900;
-    var lfo = ctx.createOscillator(), la = ctx.createGain();
+    var lfo = oscillator(), la = ctx.createGain();
     lfo.type = "sine";
-    lfo.frequency.value = 1 / (60 / bpm / 2);      // 8분음표마다 한 번
+    lfo.frequency.value = 1 / (60 / tempoAt(t).bpm / 2);      // 8분음표마다 한 번
     la.gain.value = 750;
     lfo.connect(la); la.connect(lp.frequency);
     lfo.start(t); lfo.stop(t + dur + rel);
     [0, -8, 8].forEach(function (c) {
-      var o = ctx.createOscillator();
+      var o = oscillator();
       o.type = "sawtooth";
       o.frequency.value = f * Math.pow(2, c / 1200);
       o.connect(lp); o.start(t); o.stop(t + dur + rel);
@@ -1208,14 +1329,14 @@
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.5 * v, t + 0.015);
     g.gain.setTargetAtTime(0.0001, t + dur, 0.05);
-    lp.connect(g); g.connect(master);
+    lp.connect(g); connectVoice(g, 0);
   }
 
   /* 보컬 칩 — 톱니를 포먼트 세 개로 걸러 '아' 하는 사람 소리에 가깝게 */
   function chop(m, t, dur, v) {
     v = v || 1;
     var f = hz(m), rel = 0.18, g = ctx.createGain();
-    var src = ctx.createOscillator();
+    var src = oscillator();
     src.type = "sawtooth";
     src.frequency.setValueAtTime(f, t);
     [[800, 6, 1.0], [1150, 9, 0.55], [2900, 12, 0.3]].forEach(function (fm) {
@@ -1227,8 +1348,7 @@
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.5 * v, t + 0.02);
     g.gain.setTargetAtTime(0.0001, t + dur, 0.05);
-    g.connect(master);
-    var sd = ctx.createGain(); sd.gain.value = 0.5; g.connect(sd); sd.connect(wet);
+    connectVoice(g, 0.5);
     src.start(t); src.stop(t + dur + rel);
   }
 
@@ -1242,7 +1362,7 @@
     }
     sh.curve = curve;
     [0, 3, 7, 12].forEach(function (semi, k) {
-      var o = ctx.createOscillator();
+      var o = oscillator();
       o.type = "sawtooth";
       var base = hz(62 + semi);
       o.frequency.setValueAtTime(base * 0.96, t);
@@ -1259,8 +1379,7 @@
     g.gain.exponentialRampToValueAtTime(0.36, t + 0.03);
     g.gain.setValueAtTime(0.36, t + 0.85);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 1.15);
-    sh.connect(lp); lp.connect(g); g.connect(master);
-    var sd = ctx.createGain(); sd.gain.value = 0.3; g.connect(sd); sd.connect(wet);
+    sh.connect(lp); lp.connect(g); connectVoice(g, 0.3);
   }
 
   /* 스크래치 — 음이 앞뒤로 빠르게 밀린다 */
@@ -1295,7 +1414,7 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
       s.connect(f); out(f, g, t, 0.5);
     } else if (kind === 1) {
-      o = ctx.createOscillator(); g = ctx.createGain();
+      o = oscillator(); g = ctx.createGain();
       o.frequency.setValueAtTime(120, t);
       o.frequency.exponentialRampToValueAtTime(32, t + 0.6);
       g.gain.setValueAtTime(0.9, t);
@@ -1318,7 +1437,7 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
       s.connect(f); out(f, g, t, 0.55);
     } else if (kind === 4) {
-      o = ctx.createOscillator(); g = ctx.createGain();
+      o = oscillator(); g = ctx.createGain();
       o.type = "sawtooth";
       o.frequency.setValueAtTime(2400, t);
       o.frequency.exponentialRampToValueAtTime(90, t + 0.22);
@@ -1326,7 +1445,7 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
       out(o, g, t, 0.4); o.start(t); o.stop(t + 0.26);
     } else if (kind === 5) {
-      o = ctx.createOscillator(); g = ctx.createGain();
+      o = oscillator(); g = ctx.createGain();
       o.type = "sine";
       o.frequency.setValueAtTime(560, t);
       o.frequency.linearRampToValueAtTime(1150, t + 0.5);
@@ -1342,7 +1461,7 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.33);
       s.connect(f); out(f, g, t, 0.3);
     } else {
-      o = ctx.createOscillator(); g = ctx.createGain();
+      o = oscillator(); g = ctx.createGain();
       o.type = "sine"; o.frequency.value = 41.2;
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(0.8, t + 0.03);
@@ -1819,9 +1938,9 @@
     if (!buf) { decodeOne(it.path); return true; }   // 아직 디코딩 전이면 이번 타는 건너뜀
     var key = c + ":" + x + ":" + y;
     stopVoiceAt(key, when);
-    var src = ctx.createBufferSource(), g = ctx.createGain();
+    var src = bufferSource(), g = ctx.createGain();
     src.buffer = buf; g.gain.value = 1;
-    src.connect(g); g.connect(master);
+    src.connect(g); connectVoice(g, 0);
     if (it.loop === 0) { src.loop = true; src.start(when); }
     else if (it.loop >= 2) { src.loop = true; src.start(when); src.stop(when + buf.duration * it.loop); }
     else src.start(when);
@@ -1893,13 +2012,14 @@
   /* ── autoPlay 엔진 ──
      rAF 로 시간을 재면 탭이 가려지는 순간 곡이 멈춘다.
      그래서 오디오 시계에 앞당겨 예약하는 방식으로 돌린다. */
-  var apOn = false, apIdx = 0, apT0 = 0, apChain = 1, apTimer = null;
+  var apOn = false, apIdx = 0, apT0 = 0, apChain = 1, apTimer = null, apEpoch = 0;
   var AP_LOOKAHEAD = 1.2;   // 초 — 백그라운드 스로틀링을 버틸 만큼
 
   function autoStart() {
     if (!pack || !pack.auto) return;
     if (!initAudio()) return;
     wake();
+    autoStop();
     stopAll();
     apOn = true; apIdx = 0; apChain = 1;
     apT0 = ctx.currentTime + 0.15;
@@ -1910,6 +2030,7 @@
   }
   function autoStop() {
     apOn = false;
+    apEpoch++;
     clearInterval(apTimer); apTimer = null;
     updatePlay();
   }
@@ -1941,7 +2062,8 @@
   /* 소리는 오디오 시계에, 화면은 그때 맞춰 따로 */
   function scheduleUi(when, fn) {
     var ms = (when - ctx.currentTime) * 1000;
-    setTimeout(fn, ms > 0 ? ms : 0);
+    var epoch = apEpoch;
+    setTimeout(function () { if (epoch === apEpoch) fn(); }, ms > 0 ? ms : 0);
   }
 
   /* ═══════════════════════════════════════════════════════
@@ -1968,9 +2090,7 @@
   var beatEls = [], chainChips = [];
   var chordEl = null, swpEl = null, swpBar = null, bpmChip = null;
   function nudgeBpm(d) {
-    bpm = Math.max(70, Math.min(170, bpm + d));
-    bpmEl.value = bpm; bpmV.textContent = bpm;
-    if (bpmChip) bpmChip.textContent = bpm;
+    setTempo(bpm + d);
   }
 
   function padAt(r, c) { return pads[r * COLS + c]; }
@@ -2051,7 +2171,7 @@
       }
       var row = rowsOf()[r];
       if (!row) return "";
-      if (row.kind === "loop") return bank()[row.key][c].name;
+      if (row.kind === "loop") return bank()[row.key][c + (bank().modeCol ? djPage * 4 : 0)].name;
       if (row.kind === "perc") return PERC[c];
       if (row.kind === "fx")   return (bank().fxNames || FXN)[c];
       return NOTE_NAMES[c % 7] || "";
@@ -2064,12 +2184,19 @@
   }
 
   function paintPads() {
+    var labels = bank().modeCol && mode === "synth" && djMode >= 2
+      ? (djMode === 2 ? ["드럼", "타악기", "효과음", "효과음", "신스"] : ["음", "음", "음", "음", "음"]) : null;
+    if (labels) labels[0] = djMode === 2 ? "드럼" : "음";
+    Array.from(rail.children).forEach(function (el, r) { el.textContent = mode === "pack" ? (r + 1) + "줄" : labels ? labels[r] : rowsOf()[r].label; });
     for (var r = 0; r < ROWS_N; r++) {
       for (var c = 0; c < COLS; c++) {
         var p = padAt(r, c);
         if (!p) continue;
         var hueVar = mode === "synth" ? (rowsOf()[r] || SYNTH_ROWS[0]).hue : null;
         var isMode = mode === "synth" && bank().modeCol && c === COLS - 1;
+        if (mode === "synth" && bank().modeCol && djMode >= 2 && !isMode) {
+          hueVar = { drums: "--f-drum", bass: "--f-bass", chords: "--f-chord", lead: "--f-note", fx: "--f-fx" }[soundPart(r, c)];
+        }
         if (isMode) hueVar = r === 4 ? "--f-stop" : "--f-perc";
         var empty = "0";
         if (mode === "pack") {
@@ -2080,6 +2207,7 @@
         }
         var cap = capFor(r, c);
         p.style.setProperty("--hue", "var(" + hueVar + ")");
+        p.classList.toggle("stop-pad", isMode && r === 4);
         if (isMode) p.dataset.lit = (r === djMode && r < 4) ? "1" : "0";
         p.dataset.empty = empty;
         p.querySelector(".cap").textContent = cap;
@@ -2087,10 +2215,21 @@
           (r < 4 && c < 8) ? KEYROWS[r][c]
           : (r >= 4 && r < 8 && c < 8) ? "⇧" + KEYROWS[r - 4][c] : "";
         p.setAttribute("aria-label",
-          (mode === "synth" ? (rowsOf()[r] || {}).label || "" : chain + "페이지") + " " + (cap || "빈 칸"));
+          (isMode ? (r === 4 ? "모든 소리" : "모드") : mode === "synth" ? (labels ? labels[r] : (rowsOf()[r] || {}).label || "") : chain + "페이지") + " " + (cap || "빈 칸"));
       }
     }
     if (mode === "synth") syncLights();
+    paintAll();
+  }
+  function soundPart(r, c) {
+    if (mode === "pack") return "fx";
+    if (bank().modeCol && djMode === 3) return "lead";
+    if (bank().modeCol && djMode === 2) {
+      var i = r * 4 + c;
+      return i < 8 ? "drums" : i < 16 ? "fx" : (i === 16 || i === 19) ? "bass" : i === 17 ? "chords" : "lead";
+    }
+    var row = rowsOf()[r];
+    return row && row.key || (row && row.kind === "perc" ? "drums" : row && row.kind === "note" ? "lead" : "fx");
   }
 
   /* ═══════════════════════════════════════════════════════
@@ -2099,6 +2238,38 @@
      그래야 누른 채 옆 칸으로 넘어가는 연주가 된다.
      ═══════════════════════════════════════════════════════ */
   var touchMap = new Map();   // pointerId -> 지금 짚고 있는 패드
+  var heldInputs = new Map(), rollHolds = new Map();
+  function refreshRoll() {
+    rollLayer = -1;
+    rollHolds.forEach(function (h) { rollLayer = h.row; rollStep = h.step; });
+  }
+  function releaseInput(id) {
+    var h = heldInputs.get(id);
+    if (!h) return;
+    heldInputs.delete(id);
+    rollHolds.delete(id); refreshRoll();
+    if (h.recording) stopRec();
+    if (h.gated) releaseVoice(h.voice);
+    if (h.packVoice && h.packVoice.inf) {
+      releaseVoice(h.voice);
+      try { h.packVoice.src.stop(ctx.currentTime + 0.015); } catch (e) {}
+      if (voices.get(h.packKey) === h.packVoice) voices.delete(h.packKey);
+    }
+    var stillHeld = false;
+    heldInputs.forEach(function (other) { if (h.r === other.r && h.c === other.c) stillHeld = true; });
+    var p = padAt(h.r, h.c);
+    if (p && !stillHeld) p.classList.remove("down");
+  }
+  function releaseAllInputs() {
+    Array.from(heldInputs.keys()).forEach(releaseInput);
+    rollHolds.clear(); refreshRoll(); touchMap.clear();
+    pads.forEach(function (p) { p.classList.remove("down"); });
+  }
+  function setDJMode(n) {
+    releaseAllInputs();
+    djMode = n;
+    paintPads();
+  }
 
   function padFromPoint(x, y) {
     var el = document.elementFromPoint(x, y);
@@ -2115,38 +2286,45 @@
     ev.preventDefault();
     touchMap.set(ev.pointerId, p);
     p.classList.add("down");
-    press(+p.dataset.r, +p.dataset.c);
+    press(+p.dataset.r, +p.dataset.c, 1, "pointer:" + ev.pointerId);
   });
 
   window.addEventListener("pointermove", function (ev) {
     if (!touchMap.has(ev.pointerId)) return;
     var prev = touchMap.get(ev.pointerId);
     var p = padFromPoint(ev.clientX, ev.clientY);
-    if (!p || p === prev) return;
-    prev.classList.remove("down");
-    release(+prev.dataset.r, +prev.dataset.c);
+    if (p === prev) return;
+    if (prev) release(+prev.dataset.r, +prev.dataset.c, "pointer:" + ev.pointerId);
     touchMap.set(ev.pointerId, p);
-    if (!glideEl.checked || armed) return;
+    if (!p || !glideEl.checked || armed) return;
     /* 훑기는 원샷과 팩에만. 루프 칸은 지나가도 켜지지 않는다 —
        스치기만 해도 클립이 바뀌면 연주가 아니라 사고다. */
     var r = +p.dataset.r;
-    if (mode === "pack" || r >= 4) {
+    if (mode === "pack" || (bank().modeCol && (djMode === 2 || djMode === 3) && +p.dataset.c < COLS - 1) || r >= 4) {
       p.classList.add("down");
-      press(r, +p.dataset.c);
+      press(r, +p.dataset.c, 1, "pointer:" + ev.pointerId);
     }
   });
 
   function endPointer(ev) {
     var p = touchMap.get(ev.pointerId);
-    if (!p) return;
     touchMap.delete(ev.pointerId);
-    p.classList.remove("down");
-    release(+p.dataset.r, +p.dataset.c);
+    releaseInput("pointer:" + ev.pointerId);
   }
   window.addEventListener("pointerup", endPointer);
   window.addEventListener("pointercancel", endPointer);
 
-  function press(r, c) {
+  function press(r, c, velocity, inputId) {
+    if (r < 0 || c < 0 || r >= ROWS_N || c >= COLS || !initAudio()) return;
+    var id = inputId || "cell:" + r + ":" + c;
+    if (heldInputs.has(id)) return;
+    var h = { r: r, c: c, recording: armed && !recorder && !!micStream, gated: mode === "synth" && bank().modeCol && djMode === 3 && c < COLS - 1 && gateNotes };
+    if (mode === "pack") h.packKey = chain + ":" + (c + 1) + ":" + (flipY ? pack.y - r : r + 1);
+    heldInputs.set(id, h);
+    h.voice = playSound(soundPart(r, c), velocity, function () { pressPad(r, c, id); });
+    if (h.packKey) h.packVoice = voices.get(h.packKey);
+  }
+  function pressPad(r, c, inputId) {
     if (!initAudio()) return;
     wake();
     if (eraseOn) {                         // 칸 지우는 중
@@ -2171,7 +2349,7 @@
     /* 오른쪽 기둥 = 모드 전환 */
     if (B1.modeCol && c === COLS - 1) {
       if (r === 4) { panicAll(); updatePlay(); }
-      else { djMode = r; paintPads(); }
+      else setDJMode(r);
       flashPad(padAt(r, c));
       return;
     }
@@ -2179,7 +2357,7 @@
     if (B1.modeCol) {
       var now2 = qTime() + 0.001;
       if (djMode === 1) {                       // 롤 — 누르고 있는 동안만
-        if (r < 4) { rollLayer = r; rollStep = ROLL_STEPS[c] || 4; if (!playing) start(); }
+        if (r < 4) { rollHolds.set(inputId, { row: r, step: ROLL_STEPS[c] || 4 }); refreshRoll(); if (!playing) start(); }
         else (B1.fxFn || fx)(c, now2);
         flashPad(padAt(r, c));
         return;
@@ -2192,7 +2370,7 @@
       }
       if (djMode === 3) {                       // 음
         var idx = r * (COLS - 1) + c;
-        superSaw(deg(idx), now2, 0.55, 1.3, 4600);
+        superSaw(deg(idx), now2, gateNotes ? 3600 : 0.55, 1.3, 4600);
         flashPad(padAt(r, c));
         return;
       }
@@ -2202,12 +2380,14 @@
     var now = qTime() + 0.001;
     if (row.kind === "loop") {
       if (!playing) start();
-      if (active[r] === c) {
+      var clip = c + (bank().modeCol ? djPage * 4 : 0);
+      pendingScene = null; currentScene = "직접 연주";
+      if (active[r] === clip) {
         active[r] = null;
         pending = pending.filter(function (p) { return p.row !== r; });
       } else {
         pending = pending.filter(function (p) { return p.row !== r; });
-        pending.push({ row: r, col: c });
+        pending.push({ row: r, col: clip });
       }
       syncLights();
       return;
@@ -2220,15 +2400,8 @@
     flashPad(padAt(r, c));
   }
 
-  function release(r, c) {
-    if (armed) { stopRec(); return; }
-    if (mode === "synth" && bank().modeCol && djMode === 1 && r < 4 && c < COLS - 1) {
-      if (rollLayer === r) rollLayer = -1;      // 손을 떼면 원래 흐름으로
-      return;
-    }
-    if (mode !== "pack" || !pack) return;
-    var y = flipY ? (pack.y - r) : (r + 1);
-    packRelease(c + 1, y);
+  function release(r, c, inputId) {
+    releaseInput(inputId || "cell:" + r + ":" + c);
   }
 
   function flashPad(p) {
@@ -2237,7 +2410,9 @@
     var r = +p.dataset.r, c = +p.dataset.c;
     midiLight(r, c, "1");
     setTimeout(function () {
-      if (mode === "synth" && (rowsOf()[r] || {}).kind === "loop") syncLights();
+      if (padAt(r, c) !== p) return;
+      if (mode === "synth" && bank().modeCol && c === COLS - 1) { paintPads(); return; }
+      if (mode === "synth" && (!bank().modeCol || djMode === 0) && (rowsOf()[r] || {}).kind === "loop") syncLights();
       else { p.dataset.lit = "0"; midiLight(r, c, "0"); }
     }, 150);
   }
@@ -2256,7 +2431,7 @@
       if (rr >= ROWS_N) break;
       try {
         var buf = await ctx.decodeAudioData(await f.arrayBuffer());
-        var path = "user/" + f.name;
+        var path = "user/" + Date.now() + "-" + k + "-" + f.name;
         decoded.set(path, buf);
         userBlobs.set(path, f);
         var y = flipY ? (pack.y - rr) : (rr + 1);
@@ -2302,8 +2477,29 @@
   }
   var pending = [];
   var visQ = [];
+  var pendingScene = null, currentScene = "직접 연주", positionEl = null, performanceEl = null;
+  var SCENES = [
+    { name: "Intro", clips: [null, null, 0, null] },
+    { name: "Groove", clips: [0, 0, 2, null] },
+    { name: "Build", clips: [4, null, 3, 2] },
+    { name: "Drop", clips: [0, 0, 0, 1] }
+  ];
+  function queueScene(index) {
+    if (!initAudio()) return;
+    pending = []; pendingScene = SCENES[index];
+    if (!playing) start();
+    showPerformanceState();
+  }
+  function showPerformanceState() {
+    if (!performanceEl || mode !== "synth") return;
+    var names = [];
+    loopRows().forEach(function (r) {
+      if (active[r] != null) names.push(rowsOf()[r].label + ":" + bank()[rowsOf()[r].key][active[r]].name);
+    });
+    performanceEl.textContent = (pendingScene ? "다음 마디: " + pendingScene.name : currentScene) + " · " + (names.join(" / ") || "루프 없음") + (pending.length ? " · 다음 마디 전환 대기" : "");
+  }
 
-  function spb() { return 60 / bpm / 4; }
+  function spb(at) { return 60 / tempoAt(at == null ? nextTime : at).bpm / 4; }
 
   /* 16마디에 걸쳐 260Hz ~ 9kHz 를 왕복하는 컷오프 */
   function sweepCut(a) {
@@ -2314,6 +2510,11 @@
   function scheduleStep(st, t, abs) {
     var inBar = st % 16;
     var B = bank();
+    if (inBar === 0 && pendingScene) {
+      active = active.map(function (_, r) { return r < 4 ? pendingScene.clips[r] : null; });
+      currentScene = pendingScene.name; pendingScene = null;
+      syncLights();
+    }
     if (inBar === 0 && pending.length) {
       pending.forEach(function (p) { active[p.row] = p.col; });
       pending = []; syncLights();
@@ -2334,11 +2535,13 @@
     if (rollLayer >= 0 && (B.rows || SYNTH_ROWS)[rollLayer]) {
       var rk = (B.rows || SYNTH_ROWS)[rollLayer].key;
       if (st % rollStep === 0) {
-        var rd = spb() * rollStep * 0.9;
+        var rd = spb(t) * rollStep * 0.9;
+        playSound(rk, 1, function () {
         if (rk === "drums") { kick(t, 1); hat(t, 0.5, false); }
         else if (rk === "bass") (B.bassFn || bassNote)(chd.root + 12, t, rd, 1);
         else if (rk === "chords") (B.chordFn || chordVoice)(chd.notes, t, rd, 1.1, false, 0);
         else if (rk === "lead") (B.leadFn || leadNote)(deg(4), t, rd, 1.1);
+        });
       }
       if (rk === "drums") aDrums = null;
       else if (rk === "bass") aBass = null;
@@ -2347,42 +2550,50 @@
     }
 
     if (aDrums !== null) {
+      playSound("drums", 1, function () {
       var d = B.drums[aDrums];
       if (d.k.indexOf(inBar) >= 0) kick(t, 1);
       if (d.s.indexOf(inBar) >= 0) snare(t, 0.9);
       if (d.c.indexOf(inBar) >= 0) clap(t, 0.8);
       if (d.h.indexOf(inBar) >= 0) hat(t, inBar % 4 === 0 ? 1 : 0.6, false);
       if (d.o.indexOf(inBar) >= 0) hat(t, 0.7, true);
+      });
     }
     if (aBass !== null) {
+      playSound("bass", 1, function () {
       var bp = B.bass[aBass];
       var bfn = bp.wob ? wobble : (B.bassFn || bassNote);
       bp.n.forEach(function (e) {
-        if (e[0] === inBar) bfn(chd.root + 12 + e[1], t, e[2] * spb() * 0.9, 1);
+        if (e[0] === inBar) bfn(chd.root + 12 + e[1], t, e[2] * spb(t) * 0.9, 1);
+      });
       });
     }
     if (aChords !== null) {
+      playSound("chords", 1, function () {
       var cc = B.chords[aChords];
       if (cc.hits.indexOf(inBar) >= 0) {
         var sw = (cc.sweep && sweepOn) ? sweepCut(abs) : 0;
         var cfn = B.chordFn || chordVoice;
         if (cc.mode === "hold") {
-          cfn(chd.notes, t, spb() * 16 * 0.95, 1, !!cc.swell,
+          cfn(chd.notes, t, spb(t) * 16 * 0.95, 1, !!cc.swell,
               sw, sw ? sweepCut(abs + 16) : 0);
         } else if (cc.mode === "stab") {
-          cfn(chd.notes, t, spb() * 1.6, 1.15, false, sw);
+          cfn(chd.notes, t, spb(t) * 1.6, 1.15, false, sw);
         } else {
           var idx = cc.hits.indexOf(inBar);
           var order = cc.dir > 0 ? idx % 3 : 2 - (idx % 3);
-          cfn([chd.notes[order % chd.notes.length] + 12], t, spb() * 2.2, 1.5, false, sw);
+          cfn([chd.notes[order % chd.notes.length] + 12], t, spb(t) * 2.2, 1.5, false, sw);
         }
       }
+      });
     }
     if (aLead !== null) {
+      playSound("lead", 1, function () {
       var lp2 = B.lead[aLead];
       var lfn = lp2.saw ? sawLead : (B.leadFn || leadNote);
       lp2.n.forEach(function (e) {
-        if (e[0] === inBar) lfn(deg(e[1]), t, e[2] * spb() * 0.92, 1);
+        if (e[0] === inBar) lfn(deg(e[1]), t, e[2] * spb(t) * 0.92, 1);
+      });
       });
     }
     visQ.push({ t: t, st: st, abs: abs });
@@ -2390,9 +2601,18 @@
 
   function tick() {
     if (!playing) return;
+    // Drop missed events rather than playing a burst of notes from the past.
+    var now = ctx.currentTime;
+    while (nextTime < now - 0.005) {
+      var span = spb(nextTime), boundary = Infinity;
+      tempoSegments.forEach(function (s) { if (s.at > nextTime + 1e-8) boundary = Math.min(boundary, s.at); });
+      var skip = Math.max(1, Math.ceil((Math.min(now - 0.005, boundary) - nextTime) / span - 1e-8));
+      nextTime += skip * span; absStep += skip; step = (step + skip) % 64;
+    }
+    visQ = visQ.filter(function (e) { return e.t >= now - 0.15; });
     while (nextTime < ctx.currentTime + 0.12) {
       scheduleStep(step, nextTime, absStep);
-      nextTime += spb();
+      nextTime += spb(nextTime);
       step = (step + 1) % 64;
       absStep++;
     }
@@ -2403,31 +2623,38 @@
     if (playing) return;
     playing = true; step = 0; absStep = 0; nextTime = ctx.currentTime + 0.08;
     gridAnchor = nextTime;                 // 손으로 치는 소리도 같은 격자에 태운다
+    tempoSegments = [{ at: 0, anchor: nextTime, bpm: bpm }];
+    visQ = [];
     timer = setInterval(tick, 25);
     ensureFrame();
     updatePlay();
   }
   function stopSeq() {
     playing = false; clearInterval(timer);
+    releaseAllInputs(); visQ = [];
     updatePlay();
     beatEls.forEach(function (b) { b.classList.remove("lit"); });
   }
   function panicAll() {
     for (var i = 0; i < active.length; i++) active[i] = null;
-    pending = [];
-    stopSeq(); syncLights();
+    pending = []; pendingScene = null; currentScene = "직접 연주";
+    stopSeq(); autoStop(); stopAll(); stopAllLights(); stopPreview();
+    silenceAudio(); syncLights();
   }
 
   function syncLights() {
     if (mode !== "synth") return;
+    showPerformanceState();
+    if (bank().modeCol && djMode !== 0) return;
     var lr = loopRows();
     for (var li = 0; li < lr.length; li++) {
       var r = lr[li];
       var modeCol = bank().modeCol ? COLS - 1 : -1;
       for (var c = 0; c < COLS; c++) {
         if (c === modeCol) continue;          // 모드 기둥은 건드리지 않는다
-        var lit = active[r] === c ? "1" : "0";
-        if (pending.some(function (p) { return p.row === r && p.col === c; })) lit = "2";
+        var clip = c + (bank().modeCol ? djPage * 4 : 0);
+        var lit = active[r] === clip ? "1" : "0";
+        if (pending.some(function (p) { return p.row === r && p.col === clip; })) lit = "2";
         var p = padAt(r, c);
         if (p && p.dataset.lit !== lit) { p.dataset.lit = lit; midiLight(r, c, lit); }
       }
@@ -2450,6 +2677,7 @@
       while (visQ.length && visQ[0].t <= t) {
         var e = visQ.shift();
         var beat = Math.floor((e.st % 16) / 4);
+        if (positionEl) positionEl.textContent = (Math.floor(e.abs / 16) % 16 + 1) + " / 16마디 · " + (beat + 1) + "박";
         beatEls.forEach(function (b, i) { b.classList.toggle("lit", i === beat); });
         if (chordEl) {
           var pg = bank().prog[Math.floor(e.st / 16) % 4];
@@ -2464,7 +2692,8 @@
           for (var li2 = 0; li2 < lrs.length; li2++) {
             var r = lrs[li2];
             if (active[r] !== null) {
-              var p = padAt(r, active[r]);
+              var visibleCol = active[r] - (bank().modeCol ? djPage * 4 : 0);
+              var p = visibleCol >= 0 && visibleCol < (bank().modeCol ? 4 : COLS) && (!bank().modeCol || djMode === 0) ? padAt(r, visibleCol) : null;
               if (p) { p.classList.remove("pulse"); void p.offsetWidth; p.classList.add("pulse"); }
             }
           }
@@ -2483,6 +2712,7 @@
      8. 모드 전환 · 시트
      ═══════════════════════════════════════════════════════ */
   function setMode(m) {
+    releaseAllInputs();
     mode = m;
     if (m === "pack") {
       stopSeq();
@@ -2495,14 +2725,14 @@
     } else {
       stopAll(); autoStop();
       COLS = colsOf(); ROWS_N = rowsOf().length;
-      ttl.textContent = "기본 소리";
+      ttl.textContent = bank().name + " 소리";
       playBtn.disabled = false;
       $("tosynth").disabled = true;
       bpmRow.hidden = false; flipRow.hidden = true;
       legendBox.hidden = false; metaEl.hidden = true; logEl.hidden = true;
     }
     if (armed) recNote("녹음 대기 — 패드를 누르고 있으세요", "warn");
-    sheetTitle.textContent = (mode === "pack" && pack) ? pack.title : "기본 소리";
+    sheetTitle.textContent = (mode === "pack" && pack) ? pack.title : bank().name + " 소리";
     buildStrip();
     buildGrid();
     updatePlay();
@@ -2511,6 +2741,7 @@
   /* 그리드 위 얇은 띠 — 신스면 박자등, 팩이면 체인 칩 */
   function buildStrip() {
     strip.innerHTML = ""; beatEls = []; chainChips = [];
+    positionEl = null; performanceEl = null;
     var lab = document.createElement("span");
     lab.className = "striplabel";
     strip.appendChild(lab);
@@ -2586,13 +2817,34 @@
         b.addEventListener("click", function () { setBank(i); });
         strip.appendChild(b);
       });
+      if (bank().modeCol) {
+        var pageBtn = document.createElement("button");
+        pageBtn.type = "button"; pageBtn.className = "chip";
+        pageBtn.textContent = "루프 패턴 " + (djPage ? "5–8" : "1–4");
+        pageBtn.addEventListener("click", function () { releaseAllInputs(); djPage = 1 - djPage; buildStrip(); paintPads(); });
+        strip.appendChild(pageBtn);
+      }
+      positionEl = document.createElement("span"); positionEl.className = "striplabel";
+      positionEl.textContent = "1 / 16마디 · 1박"; strip.appendChild(positionEl);
+      var sceneButtons = document.createElement("div"); sceneButtons.className = "scene-buttons";
+      SCENES.forEach(function (scene, index) {
+        var b = document.createElement("button"); b.type = "button"; b.className = "chip";
+        b.textContent = scene.name; b.setAttribute("aria-label", "장면 " + scene.name);
+        b.addEventListener("click", function () { queueScene(index); }); sceneButtons.appendChild(b);
+      });
+      strip.appendChild(sceneButtons);
+      performanceEl = document.createElement("span"); performanceEl.className = "striplabel performance";
+      strip.appendChild(performanceEl); showPerformanceState();
     }
   }
 
   function setBank(i) {
+    releaseAllInputs(); pendingScene = null; currentScene = "직접 연주";
     var sizeChanged = (BANKS[i].cols || 8) !== COLS ||
                       (BANKS[i].rows || SYNTH_ROWS).length !== ROWS_N;
     bankIdx = i;
+    if (mode === "synth") { ttl.textContent = BANKS[i].name + " 소리"; sheetTitle.textContent = ttl.textContent; }
+    djPage = BANKS[i].modeCol && active.slice(0, 4).some(function (c) { return c >= 4; }) ? 1 : 0;
     djMode = 0; rollLayer = -1;
     pumpAmt = BANKS[i].pump;
     if (duck) {
@@ -2688,8 +2940,7 @@
     updatePlay();
   });
   stopBtn.addEventListener("click", function () {
-    if (mode === "pack") { autoStop(); stopAll(); stopAllLights(); }
-    else panicAll();
+    panicAll();
     updatePlay();
   });
   $("tosynth").addEventListener("click", function () {
@@ -2705,12 +2956,11 @@
   scrim.addEventListener("click", closeSheet);
 
   bpmEl.addEventListener("input", function () {
-    bpm = +bpmEl.value; bpmV.textContent = bpm;
-    if (bpmChip) bpmChip.textContent = bpm;
+    setTempo(+bpmEl.value);
   });
   volEl.addEventListener("input", function () {
     volV.textContent = volEl.value;
-    if (outGain) outGain.gain.value = volEl.value / 100 * 0.9;
+    if (outGain) outGain.gain.setTargetAtTime(volEl.value / 100 * OUTPUT_HEADROOM, ctx.currentTime, 0.015);
   });
   $("pump").addEventListener("change", function (e) {
     pumpOn = e.target.checked;
@@ -2721,6 +2971,27 @@
   });
   $("sweepon").addEventListener("change", function (e) { sweepOn = e.target.checked; });
   $("quant").addEventListener("change", function (e) { quantOn = e.target.checked; });
+  $("quantgrid").addEventListener("change", function (e) { quantSteps = +e.target.value; });
+  $("notegate").addEventListener("change", function (e) { releaseAllInputs(); gateNotes = e.target.checked; });
+  PARTS.forEach(function (part, index) {
+    var row = document.createElement("div"); row.className = "mix-row";
+    var title = document.createElement("strong"); title.textContent = PART_LABELS[index]; row.appendChild(title);
+    [["level", "음량", 0, 100, 1], ["cut", "필터", 100, 16000, 100], ["wet", "잔향", 0, 100, 1]].forEach(function (spec) {
+      var label = document.createElement("label"); label.className = "ctl";
+      label.textContent = spec[1];
+      var input = document.createElement("input"); input.type = "range";
+      input.min = spec[2]; input.max = spec[3]; input.step = spec[4];
+      input.value = spec[0] === "cut" ? mixSettings[part].cut : mixSettings[part][spec[0]] * 100;
+      input.setAttribute("aria-label", PART_LABELS[index] + " " + spec[1]);
+      var value = document.createElement("span"); value.className = "val"; value.textContent = input.value;
+      input.addEventListener("input", function () {
+        mixSettings[part][spec[0]] = +input.value / (spec[0] === "cut" ? 1 : 100);
+        value.textContent = input.value; updateMix(part);
+      });
+      label.appendChild(input); label.appendChild(value); row.appendChild(label);
+    });
+    $("mixer").appendChild(row);
+  });
   $("exportpack").addEventListener("click", exportPack);
   $("flipy").addEventListener("change", function (e) {
     flipY = e.target.checked; paintPads(); scheduleAutosave();
@@ -2763,40 +3034,39 @@
   window.addEventListener("drop", takeDrop);
 
   var KEYMAP = {};
-  KEYROWS.forEach(function (row, r) { row.forEach(function (k, c) { KEYMAP[k] = [r, c]; }); });
-
+  var KEYCODES = [
+    ["Digit1","Digit2","Digit3","Digit4","Digit5","Digit6","Digit7","Digit8"],
+    ["KeyQ","KeyW","KeyE","KeyR","KeyT","KeyY","KeyU","KeyI"],
+    ["KeyA","KeyS","KeyD","KeyF","KeyG","KeyH","KeyJ","KeyK"],
+    ["KeyZ","KeyX","KeyC","KeyV","KeyB","KeyN","KeyM","Comma"]
+  ];
+  KEYCODES.forEach(function (row, r) { row.forEach(function (k,c) { KEYMAP[k] = [r,c]; }); });
+  function editableTarget(el) {
+    return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+  }
   document.addEventListener("keydown", function (ev) {
-    if (ev.repeat || ev.target.tagName === "INPUT") return;
-    if (ev.code === "Escape") { closeSheet(); return; }
+    if (ev.repeat || ev.isComposing || ev.ctrlKey || ev.metaKey || ev.altKey || editableTarget(ev.target)) return;
+    if (ev.code === "Escape") { closeSheet(); closeEditor(); return; }
+    if (sheet.classList.contains("open") || !edEl.hidden) return;
     if (ev.code === "Space") {
       ev.preventDefault();
       if (mode === "pack") { apOn ? autoStop() : autoStart(); }
       else { playing ? stopSeq() : start(); }
       updatePlay(); return;
     }
-    if (mode === "pack" && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
-      ev.preventDefault(); setChain(chain + (ev.key === "ArrowRight" ? 1 : -1)); return;
+    if (mode === "pack" && (ev.code === "ArrowLeft" || ev.code === "ArrowRight")) {
+      ev.preventDefault(); setChain(chain + (ev.code === "ArrowRight" ? 1 : -1)); return;
     }
-    var m = KEYMAP[ev.key.toLowerCase()];
-    if (!m) return;
-    ev.preventDefault();
+    var m = KEYMAP[ev.code]; if (!m) return;
     var r = m[0] + (ev.shiftKey ? 4 : 0);
-    if (r < ROWS_N && m[1] < COLS) {
-      var p = padAt(r, m[1]); if (p) p.classList.add("down");
-      press(r, m[1]);
-    }
+    if (r >= ROWS_N || m[1] >= COLS) return;
+    ev.preventDefault();
+    var p = padAt(r,m[1]); if (p) p.classList.add("down");
+    press(r,m[1],1,"key:" + ev.code);
   });
-  document.addEventListener("keyup", function (ev) {
-    var m = KEYMAP[ev.key.toLowerCase()];
-    if (!m) return;
-    [0, 4].forEach(function (o) {
-      var r = m[0] + o;
-      if (r < ROWS_N && m[1] < COLS) {
-        var p = padAt(r, m[1]); if (p) p.classList.remove("down");
-        release(r, m[1]);
-      }
-    });
-  });
+  document.addEventListener("keyup", function (ev) { releaseInput("key:" + ev.code); });
+  window.addEventListener("blur", releaseAllInputs);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) releaseAllInputs(); });
 
   window.addEventListener("resize", fitGrid);
   /* 첫 레이아웃이 확정된 뒤 한 번 더 — 폰트가 늦게 잡히거나
@@ -2822,6 +3092,7 @@
     edBuf = buf; edName = name; edTarget = target || { r: 0, c: 0 };
     edA = 0;
     edB = Math.min(buf.duration, 4);          // 처음엔 앞 4초를 잡아둔다
+    $("sourcebpm").value = bpm; $("sourcebeat").value = 0; $("beatlength").value = "0";
     edEl.hidden = false;
     edTitle.textContent = name;
     sizeWave();
@@ -2889,9 +3160,19 @@
 
   function snapT(t) {
     if (!snapEl.checked) return t;
-    var beat = 60 / bpm;                       // 한 박
-    return Math.round(t / beat) * beat;
+    var beat = 60 / sourceTempo(), anchor = sourceAnchor();
+    return Math.max(0, Math.min(edBuf.duration, anchor + Math.round((t - anchor) / beat) * beat));
   }
+  function sourceTempo() { return Math.max(30, Math.min(300, +$("sourcebpm").value || bpm)); }
+  function sourceAnchor() { return Math.max(0, Math.min(edBuf.duration, +$("sourcebeat").value || 0)); }
+  function editorGridChanged() {
+    if (!edBuf) return;
+    edA = snapT(edA);
+    var beats = +$("beatlength").value;
+    edB = beats ? Math.min(edBuf.duration, edA + beats * 60 / sourceTempo()) : Math.max(edA, snapT(edB));
+    drawWave();
+  }
+  ["sourcebpm", "sourcebeat", "beatlength"].forEach(function (id) { $(id).addEventListener("change", editorGridChanged); });
   function xToT(clientX) {
     var b = waveEl.getBoundingClientRect();
     var f = (clientX - b.left) / b.width;
@@ -2917,7 +3198,7 @@
     else edB = Math.max(t, edA);
     drawWave();
   });
-  function edUp() { edDrag = null; }
+  function edUp() { if (edDrag && edBuf) editorGridChanged(); edDrag = null; }
   window.addEventListener("pointerup", edUp);
   window.addEventListener("pointercancel", edUp);
 
@@ -2930,32 +3211,39 @@
     if (!edBuf || !initAudio()) return;
     wake();
     if (edSrc) { stopPreview(); return; }
-    var src = ctx.createBufferSource();
-    src.buffer = edBuf;
-    src.connect(master);
+    var src = bufferSource();
+    src.buffer = trimBuffer(edBuf, edA, edB, $("edgefade").checked);
+    playSound("fx", 1, function () { connectVoice(src, 0); });
     var dur = Math.max(0.05, edB - edA);
-    src.start(ctx.currentTime, edA, dur);
+    src.start(ctx.currentTime);
     src.onended = stopPreview;
     edSrc = src;
     $("editplay").dataset.on = "1";
     $("editplay").textContent = "■ 멈추기";
   });
 
-  function trimBuffer(buf, a, b) {
+  function trimBuffer(buf, a, b, fade) {
     var sr = buf.sampleRate;
-    var s0 = Math.max(0, Math.floor(a * sr));
-    var s1 = Math.min(buf.length, Math.floor(b * sr));
+    var s0 = Math.min(buf.length - 1, Math.max(0, Math.floor(a * sr)));
+    var s1 = Math.max(s0 + 1, Math.min(buf.length, Math.floor(b * sr)));
     var len = Math.max(1, s1 - s0);
     var out = ctx.createBuffer(buf.numberOfChannels, len, sr);
     for (var c = 0; c < buf.numberOfChannels; c++) {
       out.getChannelData(c).set(buf.getChannelData(c).subarray(s0, s0 + len));
+      if (fade) {
+        var data = out.getChannelData(c), edge = Math.min(Math.floor(sr * 0.003), Math.floor(len / 2));
+        for (var i = 0; i < edge; i++) {
+          var gain = edge > 1 ? i / (edge - 1) : 0;
+          data[i] *= gain; data[len - 1 - i] *= gain;
+        }
+      }
     }
     return out;
   }
 
   function commitEdit(whole) {
     if (!edBuf || !initAudio()) return;
-    var buf = whole ? edBuf : trimBuffer(edBuf, edA, edB);
+    var buf = whole ? edBuf : trimBuffer(edBuf, edA, edB, $("edgefade").checked);
     if (buf.duration < 0.05) {
       edInfo.textContent = "너무 짧아요 — 조금 더 넓게 잡아주세요";
       return;
@@ -3022,7 +3310,7 @@
     if (eraseOn) { recNote("지울 칸을 누르세요", "warn"); return; }
     if (placeArmed) { recNote("음악을 넣을 칸을 누르세요", "ok"); return; }
     delete ttl.dataset.tone;
-    ttl.textContent = (mode === "pack" && pack) ? pack.title : "기본 소리";
+    ttl.textContent = (mode === "pack" && pack) ? pack.title : bank().name + " 소리";
   }
 
   async function armRec() {
@@ -3483,26 +3771,30 @@
   var midiOut = null;
   var PALETTE_SYNTH = [9, 53, 33, 49, 3, 17, 13, 13];
 
-  function hueIndex(r) {
+  function hueIndex(r, c) {
+    if (mode === "synth" && bank().modeCol) {
+      if (c === COLS - 1) return r === 4 ? 5 : 3;
+      return { drums: 9, bass: 53, chords: 33, lead: 13, fx: 17 }[soundPart(r, c)] || 3;
+    }
     if (mode === "synth") return PALETTE_SYNTH[r] || 3;
     return 33;  // 팩 모드는 전부 시안 계열
   }
   function noteFor(r, c) { return (8 - r) * 10 + (c + 1); }
   function midiLight(r, c, lit) {
     if (!midiOut || r > 7 || c > 7) return;
-    var base = hueIndex(r);
+    var base = hueIndex(r, c);
     var v = lit === "1" ? base : (lit === "2" ? base + 2 : 0);
     try { midiOut.send([0x90, noteFor(r, c), v]); } catch (e) {}
   }
   function paintAll() {
     if (!midiOut) return;
-    for (var r = 0; r < Math.min(8, ROWS_N); r++) {
-      for (var c = 0; c < Math.min(8, COLS); c++) {
-        var p = padAt(r, c);
+    for (var r = 0; r < 8; r++) {
+      for (var c = 0; c < 8; c++) {
+        var p = r < ROWS_N && c < COLS ? padAt(r, c) : null;
         var lit = p ? p.dataset.lit : "0";
         var empty = p && p.dataset.empty === "1";
-        var base = hueIndex(r);
-        var v = lit === "1" ? base : (empty ? 0 : base + 3);
+        var base = p ? hueIndex(r, c) : 0;
+        var v = !p ? 0 : lit === "1" ? base : (empty ? 0 : base + 3);
         try { midiOut.send([0x90, noteFor(r, c), v]); } catch (e) {}
       }
     }
@@ -3516,6 +3808,7 @@
     midis.textContent = "연결 중…"; midis.dataset.tone = "";
     navigator.requestMIDIAccess({ sysex: true }).then(function (acc) {
       var inp = null;
+      acc.onstatechange = function (event) { if (event.port.state === "disconnected") releaseAllInputs(); };
       acc.inputs.forEach(function (p) { if (/launchpad/i.test(p.name) && !inp) inp = p; });
       acc.outputs.forEach(function (p) { if (/launchpad/i.test(p.name) && !midiOut) midiOut = p; });
       if (!inp && !midiOut) {
@@ -3533,7 +3826,8 @@
           if (status !== 0x90 && status !== 0x80) return;
           var note = d[1], r = 8 - Math.floor(note / 10), c = (note % 10) - 1;
           if (r < 0 || r >= ROWS_N || c < 0 || c >= COLS) return;
-          if (status === 0x90 && d[2] > 0) press(r, c); else release(r, c);
+          var inputId = "midi:" + inp.id + ":" + d[0] % 16 + ":" + note;
+          if (status === 0x90 && d[2] > 0) press(r, c, d[2] / 127, inputId); else release(r, c, inputId);
         };
       }
       setTimeout(paintAll, 150);
