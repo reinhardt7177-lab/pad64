@@ -114,10 +114,10 @@ python -m http.server 8765
 ## 수정 검증
 
 ```powershell
-node --test tests/transport.test.cjs
+node --test tests/transport.test.cjs tests/lifecycle.test.cjs
 node tests/serve.cjs
 ```
 
 두 번째 명령 실행 후 `http://127.0.0.1:8877/tests`를 열면 실제 `OfflineAudioContext`로 출력 없이 오디오를 렌더링해 검증합니다. 결과는 화면과 `tests/artifacts/results.json`에 기록됩니다. `/`에서는 앱을 확인할 수 있습니다. 서버는 앱과 검증 화면만 제공하며 환경변수 파일이나 Git 메타데이터는 제공하지 않습니다.
 
-검증은 입력 해제·박자 변경·늦어진 스케줄러·샘플 경계, 비상 정지 후 무음·재시작·velocity·파트 mute·대표 믹스 peak를 다룹니다. 실물 MIDI 및 휴대폰 오디오 지연, LUFS·true peak 인증을 대체하지 않습니다.
+검증은 입력 해제·박자 변경·늦어진 스케줄러·샘플 경계, 비상 정지 후 무음·재시작·velocity·파트 mute·대표 믹스 peak를 다룹니다. 보드 전환 중 음원 처리, 미리 듣기 재시작, 라이트쇼 저장·복원·재내보내기와 샘플 종료 시 페이지 이동도 검사합니다. 브라우저 저장 검사는 자동 저장을 끄고 전용 임시 레코드만 만들었다가 삭제합니다. 실물 MIDI 및 휴대폰 오디오 지연, LUFS·true peak 인증을 대체하지 않습니다.

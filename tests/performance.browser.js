@@ -2,6 +2,9 @@
 // Uses real browser Web Audio offline rendering. No microphone or audio output.
 (async function runPerformanceChecks() {
   var results = [];
+  // Keep automatic saves off; persistence checks create and delete only their own ID.
+  storeOK = false;
+  clearTimeout(autoTimer);
   var runtimeErrors = [];
   window.addEventListener('error', function (e) { runtimeErrors.push(e.message); });
   window.addEventListener('unhandledrejection', function (e) { runtimeErrors.push(String(e.reason)); });
@@ -127,6 +130,51 @@
     assert(cut.length===22050,'trim length');assert(cut.getChannelData(0)[0]===0,'fade in');
     assert(cut.getChannelData(1)[cut.length-1]===0,'fade out');
     closeEditor();
+  });
+  await check('saved and legacy boards retain lights through IndexedDB and ZIP export',async function(){
+    offline(1);var enc=new TextEncoder(),id='review-fixture-'+Date.now();
+    var sample=ctx.createBuffer(1,4410,44100);sample.getChannelData(0).fill(.1);
+    var zip=await makeZip([
+      {name:'info',data:enc.encode('title=Review fixture\nbuttonX=8\nbuttonY=8\nchain=2\n')},
+      {name:'keySound',data:enc.encode('1 1 1 tone.wav\n')},
+      {name:'sounds/tone.wav',data:wavFromBuffer(sample)},
+      {name:'keyLED/1 1 1 2',data:enc.encode('on 1 1 FF0000\ndelay 100\noff 1 1\n')}
+    ]);
+    await loadPack(new File([zip],'review-fixture.zip',{type:'application/zip'}));
+    assert(pack.title==='Review fixture'&&pack.leds.size===1,'fixture import');
+    var saved=snapshot(id,'Review fixture');
+    try {
+      await idbPut(saved);var stored=await idbGet(id);
+      blankBoard('Other board');undoStack.push(['unrelated edit']);undoBtn.disabled=false;
+      await restore(stored);
+      assert(undoStack.length===0&&undoBtn.disabled,'old undo survived restore');
+      assert(pack.leds.get('1:1:1').ev[0].color==='#FF0000','stored LED color lost');
+      delete stored.leds;await restore(stored);
+      assert(pack.leds.get('1:1:1').loop===2,'legacy ZIP lightshow not recovered');
+      var exported=null,originalSave=saveBlob;
+      saveBlob=function(blob){exported=blob;};
+      try{await exportPack();}finally{saveBlob=originalSave;}
+      assert(exported,'export failed');
+      var contents=readZip(await exported.arrayBuffer());
+      var ledFile=contents.files.find(function(f){return f.name==='keyLED/1 1 1 2';});
+      assert(ledFile,'exported LED file missing');
+      var lightText=new TextDecoder().decode(await zipRead(contents,ledFile));
+      assert(lightText.includes('FF0000')&&lightText.includes('100'),'exported light events changed');
+      return {storedLights:saved.leds.length,exportedFiles:contents.files.length,legacyRecovered:true};
+    } finally {await idbDel(id);stopAll();stopAllLights();}
+  });
+  await check('cancelled wormhole stays on its page; natural audio end changes page',async function(){
+    var ac=offline(.5),sample=ac.createBuffer(1,4410,44100);
+    blankBoard('Wormhole fixture');pack.chains=2;setMode('pack');chain=1;
+    pack.map.set('1:1:1',{i:0,items:[{path:'test:worm',label:'worm.wav',loop:1,worm:2}]});
+    decoded.set('test:worm',sample);
+    packTrigger(1,1,1,0);stopVoiceAt('1:1:1',.02);
+    await ac.startRendering();await new Promise(function(resolve){setTimeout(resolve,20);});
+    assert(chain===1,'stopped audio switched page');
+    ac=offline(.5);setMode('pack');chain=1;decoded.set('test:worm',sample);
+    packTrigger(1,1,1,0);await ac.startRendering();
+    await new Promise(function(resolve){setTimeout(resolve,20);});
+    assert(chain===2,'natural completion did not switch page');
   });
   playing=false;clearInterval(timer);clearInterval(apTimer);releaseAllInputs();
   await new Promise(function(resolve){setTimeout(resolve,0);});

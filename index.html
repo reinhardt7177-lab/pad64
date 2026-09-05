@@ -1719,6 +1719,42 @@
     return seg;
   }
 
+  async function readPackLights(z, byPath) {
+    var td = new TextDecoder("utf-8");
+    var leds = new Map();
+    var ledNames = [];
+    byPath.forEach(function (f, p) { if (p.indexOf("keyled/") === 0) ledNames.push(p); });
+    for (var li = 0; li < ledNames.length && li < 400; li++) {
+      try {
+        var head = ledNames[li].slice(7).trim().split(/\s+/);
+        if (head.length < 3) continue;
+        var lc = parseInt(head[0], 10), lx = parseInt(head[1], 10), ly = parseInt(head[2], 10);
+        var lrep = head.length > 3 ? parseInt(head[3], 10) : 1;
+        if (!(lc >= 1 && lx >= 1 && ly >= 1)) continue;
+        var body = td.decode(await zipRead(z, byPath.get(ledNames[li])));
+        var at = 0, ev = [];
+        body.split(/\r?\n/).forEach(function (ln) {
+          var t = ln.trim();
+          if (!t) return;
+          var a = t.split(/\s+/), cmd = a[0].toLowerCase();
+          if (cmd === "delay" || cmd === "d") at += parseInt(a[1], 10) || 0;
+          else if (cmd === "chain" || cmd === "c") ev.push({ at: at, k: "c", n: parseInt(a[1], 10) || 1 });
+          else if (cmd === "on" || cmd === "o") {
+            if (a[1] === "*" || a[1] === "mc") return;      // 둥근 사이드 버튼 — 우리에겐 없다
+            var col = (a[3] || "").toLowerCase() === "auto"
+              ? "#2BD4EE" : "#" + String(a[3] || "FFFFFF").replace(/[^0-9a-fA-F]/g, "").slice(0, 6);
+            ev.push({ at: at, k: "on", x: +a[1], y: +a[2], color: col });
+          } else if (cmd === "off" || cmd === "f") {
+            if (a[1] === "*" || a[1] === "mc") return;
+            ev.push({ at: at, k: "off", x: +a[1], y: +a[2] });
+          }
+        });
+        if (ev.length) leds.set(lc + ":" + lx + ":" + ly, { loop: lrep, ev: ev });
+      } catch (e) {}
+    }
+    return leds;
+  }
+
   async function loadPack(file) {
     packnote.textContent = "여는 중… " + file.name;
     packnote.dataset.tone = "";
@@ -1806,47 +1842,18 @@
         if (!auto.length) auto = null;
       }
 
-      packZipBlob = file;
       /* ── keyLED 라이트쇼 ──
          파일 이름이 "체인 x y [반복]" 이고 안에 on/off/delay/chain 이 들어 있다. */
-      var leds = new Map();
-      var ledNames = [];
-      byPath.forEach(function (f, p) { if (p.indexOf("keyled/") === 0) ledNames.push(p); });
-      for (var li = 0; li < ledNames.length && li < 400; li++) {
-        try {
-          var head = ledNames[li].slice(7).trim().split(/\s+/);
-          if (head.length < 3) continue;
-          var lc = parseInt(head[0], 10), lx = parseInt(head[1], 10), ly = parseInt(head[2], 10);
-          var lrep = head.length > 3 ? parseInt(head[3], 10) : 1;
-          if (!(lc >= 1 && lx >= 1 && ly >= 1)) continue;
-          var body = td.decode(await zipRead(z, byPath.get(ledNames[li])));
-          var at = 0, ev = [];
-          body.split(/\r?\n/).forEach(function (ln) {
-            var t = ln.trim();
-            if (!t) return;
-            var a = t.split(/\s+/), cmd = a[0].toLowerCase();
-            if (cmd === "delay" || cmd === "d") at += parseInt(a[1], 10) || 0;
-            else if (cmd === "chain" || cmd === "c") ev.push({ at: at, k: "c", n: parseInt(a[1], 10) || 1 });
-            else if (cmd === "on" || cmd === "o") {
-              if (a[1] === "*" || a[1] === "mc") return;      // 둥근 사이드 버튼 — 우리에겐 없다
-              var col = (a[3] || "").toLowerCase() === "auto"
-                ? "#2BD4EE" : "#" + String(a[3] || "FFFFFF").replace(/[^0-9a-fA-F]/g, "").slice(0, 6);
-              ev.push({ at: at, k: "on", x: +a[1], y: +a[2], color: col });
-            } else if (cmd === "off" || cmd === "f") {
-              if (a[1] === "*" || a[1] === "mc") return;
-              ev.push({ at: at, k: "off", x: +a[1], y: +a[2] });
-            }
-          });
-          if (ev.length) leds.set(lc + ":" + lx + ":" + ly, { loop: lrep, ev: ev });
-        } catch (e) {}
-      }
+      var leds = await readPackLights(z, byPath);
+      packZipBlob = file;
 
       pack = {
         title: meta.title || file.name, producer: meta.producername || "?",
         x: bx, y: by, chains: ch, map: map, auto: auto, leds: leds,
         zip: z, byPath: byPath, sounds: used, skipped: skipped
       };
-      decoded = new Map(); stopAll();
+      clearBoardHistory();
+      decoded = new Map(); userBlobs = new Map(); stopAll();
       chain = 1;
       setMode("pack");
       showMeta();
@@ -1874,20 +1881,24 @@
   }
   async function decodeOne(path) {
     if (decoded.has(path)) return decoded.get(path);
+    var owner = pack, cache = decoded, blobs = userBlobs;
     try {
       var bytes;
-      if (userBlobs.has(path)) {
-        bytes = new Uint8Array(await userBlobs.get(path).arrayBuffer());
+      if (blobs.has(path)) {
+        bytes = new Uint8Array(await blobs.get(path).arrayBuffer());
       } else {
-        var f = pack.byPath.get(path);
+        var f = owner.byPath.get(path);
         if (!f) return null;
-        bytes = await zipRead(pack.zip, f);
+        bytes = await zipRead(owner.zip, f);
       }
+      if (pack !== owner || decoded !== cache) return null;
       var buf = await ctx.decodeAudioData(bytes.buffer);
-      decoded.set(path, buf);
+      if (pack !== owner || decoded !== cache) return null;
+      cache.set(path, buf);
       return buf;
     } catch (e) {
-      decoded.set(path, null);
+      if (pack !== owner || decoded !== cache) return null;
+      cache.set(path, null);
       logLines.push("디코드 실패: " + path);
       renderLog();
       return null;
@@ -1895,10 +1906,13 @@
   }
   async function pumpDecode() {
     if (!initAudio()) return;
-    var total = decodeQueue.length, done = 0;
-    while (decodeQueue.length) {
-      var path = decodeQueue.shift();
+    var queue = decodeQueue, owner = pack;
+    var total = queue.length, done = 0;
+    while (queue.length) {
+      if (pack !== owner || decodeQueue !== queue) return;
+      var path = queue.shift();
       await decodeOne(path);
+      if (pack !== owner || decodeQueue !== queue) return;
       done++;
       decnote.textContent = "사운드 " + (total - decodeQueue.length) + "/" + total;
     }
@@ -1913,6 +1927,7 @@
   function stopVoiceAt(key, when) {
     var v = voices.get(key);
     if (!v) return;
+    v.cancelled = true;
     try {
       v.g.gain.setTargetAtTime(0.0001, when, 0.02);
       v.src.stop(when + 0.12);
@@ -1944,8 +1959,13 @@
     if (it.loop === 0) { src.loop = true; src.start(when); }
     else if (it.loop >= 2) { src.loop = true; src.start(when); src.stop(when + buf.duration * it.loop); }
     else src.start(when);
-    voices.set(key, { src: src, g: g, inf: it.loop === 0 });
-    if (it.worm) src.onended = function () { setChain(it.worm); };
+    var owner = pack;
+    var voice = { src: src, g: g, inf: it.loop === 0, cancelled: false };
+    voices.set(key, voice);
+    src.onended = function () {
+      if (voices.get(key) === voice) voices.delete(key);
+      if (it.worm && !voice.cancelled && pack === owner && mode === "pack") setChain(it.worm);
+    };
     return true;
   }
   function packPress(x, y) { return packTrigger(chain, x, y, qTime()); }
@@ -2251,6 +2271,7 @@
     if (h.recording) stopRec();
     if (h.gated) releaseVoice(h.voice);
     if (h.packVoice && h.packVoice.inf) {
+      h.packVoice.cancelled = true;
       releaseVoice(h.voice);
       try { h.packVoice.src.stop(ctx.currentTime + 0.015); } catch (e) {}
       if (voices.get(h.packKey) === h.packVoice) voices.delete(h.packKey);
@@ -2279,6 +2300,14 @@
     }
     return null;
   }
+  function canGlide(r, c) {
+    if (mode === "pack") return true;
+    if (bank().modeCol) {
+      if (c === COLS - 1) return false;
+      return djMode === 2 || djMode === 3 || r === 4;
+    }
+    return r >= 4;
+  }
 
   grid.addEventListener("pointerdown", function (ev) {
     var p = padFromPoint(ev.clientX, ev.clientY);
@@ -2300,7 +2329,7 @@
     /* 훑기는 원샷과 팩에만. 루프 칸은 지나가도 켜지지 않는다 —
        스치기만 해도 클립이 바뀌면 연주가 아니라 사고다. */
     var r = +p.dataset.r;
-    if (mode === "pack" || (bank().modeCol && (djMode === 2 || djMode === 3) && +p.dataset.c < COLS - 1) || r >= 4) {
+    if (canGlide(r, +p.dataset.c)) {
       p.classList.add("down");
       press(r, +p.dataset.c, 1, "pointer:" + ev.pointerId);
     }
@@ -2422,6 +2451,7 @@
   async function assignFiles(files, r, c) {
     if (!initAudio()) return;
     if (mode !== "pack" || !pack) makeBlankPack();
+    var owner = pack, targetChain = chain, targetFlip = flipY;
     pushUndo();
     var i = 0;
     for (var k = 0; k < files.length; k++) {
@@ -2431,11 +2461,15 @@
       if (rr >= ROWS_N) break;
       try {
         var buf = await ctx.decodeAudioData(await f.arrayBuffer());
+        if (pack !== owner) {
+          recNote("보드가 바뀌어 음악 배치를 중단했어요 — 넣을 보드에서 다시 선택하세요", "warn");
+          return;
+        }
         var path = "user/" + Date.now() + "-" + k + "-" + f.name;
         decoded.set(path, buf);
         userBlobs.set(path, f);
-        var y = flipY ? (pack.y - rr) : (rr + 1);
-        pack.map.set(chain + ":" + (cc + 1) + ":" + y,
+        var y = targetFlip ? (owner.y - rr) : (rr + 1);
+        owner.map.set(targetChain + ":" + (cc + 1) + ":" + y,
                      { i: 0, items: [{ path: path, loop: 1, worm: 0, label: f.name }] });
       } catch (e) {
         logLines.push("읽기 실패: " + f.name); renderLog();
@@ -2456,6 +2490,7 @@
   }
 
   function makeBlankPack() {
+    clearBoardHistory();
     pack = { title: "내 패드", producer: "나", x: 8, y: 8, chains: 4,
              map: new Map(), auto: null, zip: null, byPath: new Map(),
              sounds: 0, skipped: 0 };
@@ -3216,7 +3251,7 @@
     playSound("fx", 1, function () { connectVoice(src, 0); });
     var dur = Math.max(0.05, edB - edA);
     src.start(ctx.currentTime);
-    src.onended = stopPreview;
+    src.onended = function () { if (edSrc === src) stopPreview(); };
     edSrc = src;
     $("editplay").dataset.on = "1";
     $("editplay").textContent = "■ 멈추기";
@@ -3480,6 +3515,11 @@
   var undoStack = [];
   var undoBtn = document.getElementById("undo");
 
+  function clearBoardHistory() {
+    undoStack = []; undoBtn.disabled = true;
+    stopAllLights();
+  }
+
   function snapMap() {
     var a = [];
     pack.map.forEach(function (slot, key) {
@@ -3515,6 +3555,7 @@
   var eraseBtn = document.getElementById("erase");
 
   function blankBoard(name) {
+    clearBoardHistory();
     pack = {
       title: name, producer: "나", x: 8, y: 8, chains: 4,
       map: new Map(), auto: null, zip: null, byPath: new Map(),
@@ -3644,14 +3685,14 @@
       zip: packZipBlob,
       meta: { title: pack.title, producer: pack.producer, x: pack.x, y: pack.y,
               chains: pack.chains, flipY: flipY },
-      auto: pack.auto, map: map, user: user
+      auto: pack.auto, map: map, user: user,
+      leds: JSON.parse(JSON.stringify(Array.from(pack.leds || [])))
     };
   }
 
   async function restore(rec) {
     if (!initAudio()) return;
     stopAll(); autoStop();
-    decoded = new Map(); userBlobs = new Map();
     var byPath = new Map(), z = null;
     if (rec.zip) {
       z = readZip(await rec.zip.arrayBuffer());
@@ -3662,12 +3703,17 @@
     }
     var map = new Map();
     rec.map.forEach(function (e) { map.set(e[0], { i: 0, items: e[1] }); });
-    rec.user.forEach(function (e) { userBlobs.set(e[0], e[1]); });
+    var restoredUser = new Map(rec.user || []);
+    var restoredLights = rec.leds
+      ? new Map(JSON.parse(JSON.stringify(rec.leds)))
+      : z ? await readPackLights(z, byPath) : new Map();
+    clearBoardHistory();
+    decoded = new Map(); userBlobs = restoredUser;
     packZipBlob = rec.zip || null;
     pack = {
       title: rec.meta.title, producer: rec.meta.producer,
       x: rec.meta.x, y: rec.meta.y, chains: rec.meta.chains,
-      map: map, auto: rec.auto || null, zip: z, byPath: byPath,
+      map: map, auto: rec.auto || null, leds: restoredLights, zip: z, byPath: byPath,
       sounds: map.size, skipped: 0
     };
     flipY = !!rec.meta.flipY;
