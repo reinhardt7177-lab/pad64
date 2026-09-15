@@ -3722,8 +3722,20 @@
     logLines = [];
     setMode("pack"); showMeta();
     predecode();
-    packnote.textContent = "\u201c" + rec.name + "\u201d 불러옴";
-    packnote.dataset.tone = "ok";
+    if (!map.size) {
+      packnote.textContent = "\u201c" + rec.name + "\u201d 는 빈 보드예요 — 저장할 때 칸이 비어 있었습니다";
+      packnote.dataset.tone = "warn";
+      /* restore 는 검증에서 단독 실행되므로 UI 알림은 있을 때만 부른다 */
+      if (typeof recNote === "function") {
+        recNote("빈 보드예요 — 소리를 넣어보세요", "warn");
+        setTimeout(function () {
+          if (!armed && !placeArmed && !eraseOn) recNoteClear();
+        }, 3200);
+      }
+    } else {
+      packnote.textContent = "\u201c" + rec.name + "\u201d 불러옴 · " + map.size + "칸";
+      packnote.dataset.tone = "ok";
+    }
   }
 
   var autoTimer = null;
@@ -3731,6 +3743,9 @@
     if (!pack || !storeOK) return;
     clearTimeout(autoTimer);
     autoTimer = setTimeout(function () {
+      /* 빈 보드로 자동저장을 덮어쓰면 직전 작업이 통째로 날아간다.
+         (새로 만들기를 실수로 눌렀을 때가 그렇다) */
+      if (!pack || !pack.map.size) return;
       var snap = snapshot("__auto", pack.title);
       if (!snap) return;
       idbPut(snap).then(function () {
@@ -3755,8 +3770,14 @@
         var nm = document.createElement("span");
         nm.className = "bn";
         nm.textContent = (r.id === "__auto" ? "자동 저장 · " : "") + r.name;
+        var cells = (r.map && r.map.length) || 0;
         var tm = document.createElement("span");
-        tm.className = "bt"; tm.textContent = stamp(r.savedAt);
+        tm.className = "bt";
+        tm.textContent = cells + "칸 · " + stamp(r.savedAt);
+        if (!cells) {
+          tm.textContent = "빈 보드 · " + stamp(r.savedAt);
+          tm.style.color = "var(--warn)";
+        }
         var open = document.createElement("button");
         open.type = "button"; open.className = "ico mini"; open.textContent = "열기";
         open.addEventListener("click", function () {
@@ -3781,6 +3802,17 @@
     if (!pack) {
       savenote.textContent = "저장할 보드가 없습니다 — 먼저 음원을 넣거나 유니팩을 여세요";
       savenote.dataset.tone = "warn"; return;
+    }
+    /* 빈 보드를 저장하면 나중에 열었을 때 '아무것도 없는 패드'가 뜬다.
+       저장 자체를 막고 무엇을 해야 하는지 알려준다. */
+    if (!pack.map.size) {
+      savenote.textContent = "아직 빈 보드예요 — 칸에 소리를 먼저 넣어주세요 (위쪽 '음악' 또는 '●' 녹음)";
+      savenote.dataset.tone = "warn";
+      recNote("빈 보드는 저장할 수 없어요", "warn");
+      setTimeout(function () {
+        if (!armed && !placeArmed && !eraseOn) recNoteClear();
+      }, 2800);
+      return;
     }
     var nm = (boardName.value || "").trim() || pack.title;
     var snap = snapshot("b" + Date.now(), nm);
