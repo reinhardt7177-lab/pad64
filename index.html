@@ -162,10 +162,13 @@
   }
 
   /* ── 그리드 위 얇은 띠: 체인 칩 또는 박자등 ───────── */
+  /* 세로 화면에서는 줄을 바꿔 접는다. 한 줄로 두면 장면 버튼과 상태 표시가
+     화면 밖으로 밀리는데, 스크롤바가 숨어 있어 아이들은 밀어 볼 생각을 못 한다.
+     띠가 높아지면 ResizeObserver 가 칸 크기를 다시 맞춘다. */
   .strip {
-    flex: none; height: 2.3rem;
-    display: flex; align-items: center; gap: 0.35rem;
-    padding: 0 0.6rem;
+    flex: none; min-height: 2.3rem;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.6rem;
     overflow-x: auto; overflow-y: hidden;
     scrollbar-width: none;
     background: linear-gradient(180deg, #0C0F16 0%, #090B11 100%);
@@ -379,7 +382,7 @@
     .stage  { grid-column: 1; grid-row: 2; min-width: 0; overflow: hidden; }
     .strip {
       grid-column: 2; grid-row: 2;
-      flex-direction: column; align-items: stretch;
+      flex-direction: column; flex-wrap: nowrap; align-items: stretch;
       width: 12rem; height: auto;
       padding: 0.9rem 0.8rem; gap: 0.6rem;
       overflow-x: hidden; overflow-y: auto;
@@ -401,7 +404,7 @@
     .ico { min-width: 3.1rem; height: 3.1rem; font-size: 0.9rem; border-radius: 12px; }
     .ico.mini { min-width: auto; height: 2.3rem; font-size: 0.74rem; }
     .chip { height: 2.3rem; min-width: 2.7rem; font-size: 0.82rem; border-radius: 9px; }
-    .strip { height: 3rem; }
+    .strip { min-height: 3rem; }
     .brand { font-size: 0.72rem; }
     .ttl { font-size: 0.82rem; }
     label.ctl { font-size: 0.78rem; }
@@ -2213,7 +2216,7 @@
         var p = padAt(r, c);
         if (!p) continue;
         var hueVar = mode === "synth" ? (rowsOf()[r] || SYNTH_ROWS[0]).hue : null;
-        var isMode = mode === "synth" && bank().modeCol && c === COLS - 1;
+        var isMode = !!(mode === "synth" && bank().modeCol && c === COLS - 1);
         if (mode === "synth" && bank().modeCol && djMode >= 2 && !isMode) {
           hueVar = { drums: "--f-drum", bass: "--f-bass", chords: "--f-chord", lead: "--f-note", fx: "--f-fx" }[soundPart(r, c)];
         }
